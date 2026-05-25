@@ -147,7 +147,7 @@ class GamepadController:
 
 
 def display_frame(frame_b64, window_name="Camera"):
-    """显示图像"""
+    """显示图像（BGR转RGB）"""
     if not frame_b64:
         return
     
@@ -156,7 +156,9 @@ def display_frame(frame_b64, window_name="Camera"):
         nparr = np.frombuffer(frame_data, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if frame is not None:
-            cv2.imshow(window_name, frame)
+            # BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            cv2.imshow(window_name, frame_rgb)
             cv2.waitKey(1)
     except Exception as e:
         pass
@@ -165,7 +167,7 @@ def display_frame(frame_b64, window_name="Camera"):
 def main():
     parser = argparse.ArgumentParser(description="LeKiwi PC Client - 底盘遥操作")
     parser.add_argument("--ip", default=DEFAULT_IP, help="树莓派 IP")
-    parser.add_argument("--display", action="store_true", help="显示摄像头画面")
+    parser.add_argument("--display", action="store_true", default=True, help="显示摄像头画面")
     args = parser.parse_args()
     
     print("=" * 60)
@@ -217,6 +219,8 @@ def main():
             action = gamepad.get_action()
             
             # 2. 发送命令
+            if any(v != 0 for v in action.values()):
+                print(f"发送: {action}")
             cmd_socket.send_string(json.dumps(action), flags=zmq.NOBLOCK)
             
             # 3. 接收图像

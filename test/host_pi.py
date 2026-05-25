@@ -29,7 +29,7 @@ from lerobot.cameras.opencv import OpenCVCameraConfig
 
 # 配置
 ROBOT_ID = "lekiwi"
-FRONT_CAMERA = "/dev/video0"
+FRONT_CAMERA = "/dev/video2"
 SERIAL_PORT = "/dev/ttyACM0"
 ZMQ_CMD_PORT = 5555
 ZMQ_OBS_PORT = 5556
@@ -53,7 +53,7 @@ def create_robot_config():
             fps=FPS,
             width=640,
             height=480,
-            rotation=Cv2Rotation.NO_ROTATION,
+            rotation=Cv2Rotation.ROTATE_180,
             warmup_s=3.0,
         ),
     }
@@ -70,7 +70,7 @@ def create_host_config():
     return LeKiwiHostConfig(
         port_zmq_cmd=ZMQ_CMD_PORT,
         port_zmq_observations=ZMQ_OBS_PORT,
-        connection_time_s=0,  # 0 = 无限运行
+        connection_time_s=10000,  # 10000秒运行时间
         watchdog_timeout_ms=WATCHDOG_MS,
         max_loop_freq_hz=FPS,
     )
@@ -124,17 +124,20 @@ def main():
             try:
                 msg = cmd_socket.recv_string(zmq.NOBLOCK)
                 data = json.loads(msg)
+                logger.info(f"收到命令: {data}")
                 robot.send_action(data)
                 last_cmd_time = time.time()
                 watchdog_active = False
                 no_command_logged = False
-                logger.debug(f"收到命令: {data}")
-            except zmq.Again:
+            except (zmq.Again, StopIteration):
+                # No command available, this is normal
                 if not watchdog_active and not no_command_logged:
                     logger.info("等待命令中...")
                     no_command_logged = True
             except Exception as e:
-                logger.error(f"命令错误: {e}")
+                import traceback
+                logger.error(f"命令错误: {type(e).__name__}: {e}")
+                logger.debug(traceback.format_exc())
             
             # 2. 看门狗
             if (time.time() - last_cmd_time > WATCHDOG_MS / 1000) and not watchdog_active:
