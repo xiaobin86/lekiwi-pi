@@ -55,14 +55,14 @@ class GamepadTeleop:
         self.speed_levels = self.config.speed_levels
         
         # Xbox button/axis indices
-        self.BTN_RB = 5          # Right Bumper
-        self.BTN_LB = 4          # Left Bumper
-        self.BTN_A = 0           # A button
-        self.BTN_B = 1           # B button
-        self.BTN_X = 2           # X button
-        self.BTN_Y = 3           # Y button
-        self.BTN_BACK = 6        # Back/View button
-        self.BTN_START = 7       # Start/Menu button
+        self.BTN_RB = 7          # Right Bumper
+        self.BTN_LB = 6          # Left Bumper
+        self.BTN_A = 3           # A button
+        self.BTN_B = 4           # B button
+        self.BTN_X = 0           # X button
+        self.BTN_Y = 1           # Y button
+        self.BTN_BACK = 8        # Back/View button
+        self.BTN_START = 11      # Start/Menu button
         
         self.AXIS_HAT = 0        # D-pad hat
         
