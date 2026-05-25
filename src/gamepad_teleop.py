@@ -181,14 +181,12 @@ class GamepadTeleop:
                     # A button could be used for gripper or other functions
                     pass
         
-        # Build action dict
-        action = {}
-        if abs(x_cmd) > 0.001:
-            action["x.vel"] = x_cmd
-        if abs(y_cmd) > 0.001:
-            action["y.vel"] = y_cmd
-        if abs(theta_cmd) > 0.001:
-            action["theta.vel"] = theta_cmd
+        # Build action dict (always include all keys for LeKiwi compatibility)
+        action = {
+            "x.vel": x_cmd,
+            "y.vel": y_cmd,
+            "theta.vel": theta_cmd,
+        }
         
         return action
     
