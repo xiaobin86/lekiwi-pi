@@ -34,7 +34,7 @@ from gamepad_teleop import GamepadTeleop, GamepadTeleopConfig
 
 # LeRobot imports
 from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
-from lerobot.teleoperators.so101_leader import SO101Leader, SO101LeaderConfig
+from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 from lerobot.utils.robot_utils import precise_sleep
 
 
@@ -60,8 +60,8 @@ Examples:
     parser.add_argument(
         "--remote-ip",
         type=str,
-        required=True,
-        help="Raspberry Pi IP address running kiwiclient (e.g., 192.168.31.165)",
+        default="192.168.3.176",
+        help="Raspberry Pi IP address running kiwiclient (e.g., 192.168.3.176)",
     )
     parser.add_argument(
         "--arm-port",
