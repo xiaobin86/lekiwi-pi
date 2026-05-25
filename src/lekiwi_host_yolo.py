@@ -58,7 +58,7 @@ class LeKiwiYoloConfig:
     robot_id: str = "lekiwi"
     
     # Camera
-    front_camera: str = "/dev/video2"
+    front_camera: str = "/dev/video0"
     enable_wrist: bool = True
     camera_warmup: float = 3.0
     camera_flip: int = 0
@@ -359,7 +359,7 @@ Examples:
     # Robot
     parser.add_argument("--robot-id", type=str, default="lekiwi", help="Robot ID (default: lekiwi)")
     parser.add_argument("--port", "-p", default="/dev/ttyACM0", help="Serial port")
-    parser.add_argument("--front-camera", default="/dev/video2", help="Front camera")
+    parser.add_argument("--front-camera", default="/dev/video0", help="Front camera")
     parser.add_argument("--no-wrist", action="store_true", help="Disable wrist cam")
     parser.add_argument("--warmup", type=float, default=3.0, help="Camera warmup (s)")
     parser.add_argument("--flip", type=int, default=0, choices=[0, 1, 2, 3], help="Rotation: 0=none, 1=90°, 2=180°, 3=270°")
