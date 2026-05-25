@@ -24,6 +24,7 @@ Features:
 import sys
 import time
 import logging
+import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -296,7 +297,7 @@ def run_host(config: LeKiwiYoloConfig):
             # Process camera frames with YOLO
             for cam_key in robot.cameras.keys():
                 frame = obs[cam_key]
-                if isinstance(frame, numpy.ndarray) and frame.size > 0:
+                if isinstance(frame, np.ndarray) and frame.size > 0:
                     # Run YOLO detection and draw boxes
                     frame = detector.detect_and_draw(frame, cam_key)
                     obs[cam_key] = frame
