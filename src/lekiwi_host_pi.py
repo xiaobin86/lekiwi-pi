@@ -56,8 +56,8 @@ class LeKiwiPiConfig:
     zmq_cmd_port: int = 5555
     zmq_obs_port: int = 5556
     
-    # Timing
-    duration: int = 30
+    # Timing (0 = infinite)
+    duration: int = 0
     watchdog_ms: int = 500
     max_freq: int = 30
     
@@ -157,7 +157,7 @@ def run_host(config: LeKiwiPiConfig):
         start = time.perf_counter()
         duration = 0
         
-        while duration < host.connection_time_s:
+        while host.connection_time_s == 0 or duration < host.connection_time_s:
             loop_start = time.time()
             
             # Receive command
@@ -232,7 +232,7 @@ Examples:
     parser.add_argument("--flip", type=int, default=0, choices=[-1, 0, 1, 2], help="Flip mode")
     parser.add_argument("--cmd-port", type=int, default=5555)
     parser.add_argument("--obs-port", type=int, default=5556)
-    parser.add_argument("--duration", "-d", type=int, default=30, help="Duration (s)")
+    parser.add_argument("--duration", "-d", type=int, default=0, help="Duration in seconds, 0=infinite (default: 0)")
     parser.add_argument("--watchdog", type=int, default=500, help="Watchdog (ms)")
     parser.add_argument("--freq", type=int, default=30, help="Max freq (Hz)")
     parser.add_argument("--verbose", "-v", action="store_true")
