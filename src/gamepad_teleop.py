@@ -57,7 +57,6 @@ class GamepadTeleop:
         # Xbox button/axis indices
         self.BTN_RB = 7          # Right Bumper
         self.BTN_LB = 6          # Left Bumper
-        self.BTN_LT = 8          # Left T
         self.BTN_A = 0           # A button
         self.BTN_B = 1           # B button
         self.BTN_X = 3           # X button
@@ -171,7 +170,7 @@ class GamepadTeleop:
         lb_prev = self._prev_button_states.get(self.BTN_LB, False)
         if lb_current and not lb_prev:
             # LB just pressed - cycle speed
-            self.speed_index = min(self.speed_index + 1, len(self.speed_levels) - 1)
+            self.speed_index = (self.speed_index + 1) % len(self.speed_levels)
             speed_name = ["SLOW", "MEDIUM", "FAST"][self.speed_index]
             print(f"   Speed: {speed_name} (xy={self.speed_levels[self.speed_index]['xy']}, theta={self.speed_levels[self.speed_index]['theta']})")
         self._prev_button_states[self.BTN_LB] = lb_current
