@@ -57,17 +57,21 @@ class GamepadTeleop:
         # Xbox button/axis indices
         self.BTN_RB = 7          # Right Bumper
         self.BTN_LB = 6          # Left Bumper
+        self.BTN_LT = 8          # Left T
         self.BTN_A = 0           # A button
         self.BTN_B = 1           # B button
         self.BTN_X = 3           # X button
         self.BTN_Y = 4           # Y button
-        self.BTN_BACK = 8        # Back/View button
+        self.BTN_BACK = 10        # Back/View button
         self.BTN_START = 11      # Start/Menu button
         
         self.AXIS_HAT = 0        # D-pad hat
         
         # Deadzone for analog inputs
         self.deadzone = 0.12
+        
+        # Track previous button states for edge detection
+        self._prev_button_states = {}
         
     def connect(self):
         """Initialize and connect to Xbox controller"""
@@ -144,13 +148,12 @@ class GamepadTeleop:
             # Check if RB is held (rotation mode)
             rb_pressed = self.joystick.get_button(self.BTN_RB)
             
-            if rb_pressed:
+            if rb_pressed and hat_x < 0:
                 # RB + D-pad: rotate in place
-                if hat_x < 0:    # D-pad Left
-                    theta_cmd += theta_speed   # Rotate left
-                elif hat_x > 0:  # D-pad Right
-                    theta_cmd -= theta_speed   # Rotate right
-                # D-pad Up/Down with RB does nothing (or could be speed control)
+                theta_cmd += theta_speed   # Rotate left
+            elif rb_pressed and hat_x > 0:  
+                # RB + D-pad Right
+                theta_cmd -= theta_speed   # Rotate right
             else:
                 # Normal mode: translation
                 if hat_y > 0:    # D-pad Up
@@ -163,23 +166,15 @@ class GamepadTeleop:
                 elif hat_x > 0:  # D-pad Right
                     y_cmd -= xy_speed      # Strafe right
         
-        # Speed control with LB/LT
-        if self.joystick.get_button(self.BTN_LB):
-            # Check if this is a new press (avoid rapid toggling)
-            # Simple approach: only act on button down events
-            pass  # Handled via events below
-        
-        # Process button events for speed control
-        for event in pygame.event.get():
-            if event.type == pygame.JOYBUTTONDOWN:
-                if event.button == self.BTN_LB:
-                    # Speed up
-                    self.speed_index = min(self.speed_index + 1, len(self.speed_levels) - 1)
-                    speed_name = ["SLOW", "MEDIUM", "FAST"][self.speed_index]
-                    print(f"   Speed: {speed_name} (xy={self.speed_levels[self.speed_index]['xy']})")
-                elif event.button == self.BTN_A:
-                    # A button could be used for gripper or other functions
-                    pass
+        # Speed control with LB - use direct polling with edge detection
+        lb_current = self.joystick.get_button(self.BTN_LB)
+        lb_prev = self._prev_button_states.get(self.BTN_LB, False)
+        if lb_current and not lb_prev:
+            # LB just pressed - cycle speed
+            self.speed_index = min(self.speed_index + 1, len(self.speed_levels) - 1)
+            speed_name = ["SLOW", "MEDIUM", "FAST"][self.speed_index]
+            print(f"   Speed: {speed_name} (xy={self.speed_levels[self.speed_index]['xy']}, theta={self.speed_levels[self.speed_index]['theta']})")
+        self._prev_button_states[self.BTN_LB] = lb_current
         
         # Build action dict (always include all keys for LeKiwi compatibility)
         action = {
