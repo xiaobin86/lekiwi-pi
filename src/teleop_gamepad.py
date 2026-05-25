@@ -109,6 +109,7 @@ Examples:
     )
     parser.add_argument(
         "--display",
+        default=True,
         action="store_true",
         help="Display camera feed from Raspberry Pi (default: False)",
     )
@@ -233,7 +234,9 @@ Examples:
                     if cam_name in observation:
                         frame = observation[cam_name]
                         if isinstance(frame, np.ndarray) and frame.size > 0:
-                            cv2.imshow(f"Camera: {cam_name}", frame)
+                            # Convert BGR to RGB for correct colors
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            cv2.imshow(f"Camera: {cam_name}", frame_rgb)
                 
                 # Check for window close or 'q' key
                 if cv2.waitKey(1) & 0xFF == ord('q'):
