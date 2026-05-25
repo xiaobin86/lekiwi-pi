@@ -82,12 +82,12 @@ class LeKiwiYoloConfig:
 def get_camera_config(config: LeKiwiYoloConfig) -> dict[str, CameraConfig]:
     """Create camera configuration."""
     rotation_map = {
-        0: Cv2Rotation.NONE,
-        1: Cv2Rotation.FLIP_HORIZONTAL,
-        -1: Cv2Rotation.FLIP_VERTICAL,
+        0: Cv2Rotation.NO_ROTATION,
+        1: Cv2Rotation.ROTATE_90,
         2: Cv2Rotation.ROTATE_180,
+        3: Cv2Rotation.ROTATE_270,
     }
-    rotation = rotation_map.get(config.camera_flip, Cv2Rotation.NONE)
+    rotation = rotation_map.get(config.camera_flip, Cv2Rotation.NO_ROTATION)
     
     cameras = {
         "front": OpenCVCameraConfig(
@@ -357,7 +357,7 @@ Examples:
     parser.add_argument("--front-camera", default="/dev/video2", help="Front camera")
     parser.add_argument("--no-wrist", action="store_true", help="Disable wrist cam")
     parser.add_argument("--warmup", type=float, default=3.0, help="Camera warmup (s)")
-    parser.add_argument("--flip", type=int, default=0, choices=[-1, 0, 1, 2], help="Flip mode")
+    parser.add_argument("--flip", type=int, default=0, choices=[0, 1, 2, 3], help="Rotation: 0=none, 1=90°, 2=180°, 3=270°")
     
     # Network
     parser.add_argument("--cmd-port", type=int, default=5555)
