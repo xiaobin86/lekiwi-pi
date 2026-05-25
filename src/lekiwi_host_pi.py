@@ -58,7 +58,7 @@ class LeKiwiPiConfig:
     
     # Timing (0 = infinite)
     duration: int = 0
-    watchdog_ms: int = 500
+    watchdog_ms: int = 2000
     max_freq: int = 30
     
     # Debug
