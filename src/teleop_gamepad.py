@@ -30,6 +30,9 @@ import sys
 # Add project src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+import pygame
+import cv2
+import numpy as np
 from gamepad_teleop import GamepadTeleop, GamepadTeleopConfig
 
 # LeRobot imports
@@ -103,6 +106,11 @@ Examples:
         type=int,
         default=30,
         help="Control loop frequency (default: 30)",
+    )
+    parser.add_argument(
+        "--display",
+        action="store_true",
+        help="Display camera feed from Raspberry Pi (default: False)",
     )
     
     args = parser.parse_args()
@@ -219,6 +227,19 @@ Examples:
             # ---- Get observations ----
             observation = robot.get_observation()
             
+            # ---- Display camera feed ----
+            if args.display:
+                for cam_name in ["front", "wrist"]:
+                    if cam_name in observation:
+                        frame = observation[cam_name]
+                        if isinstance(frame, np.ndarray) and frame.size > 0:
+                            cv2.imshow(f"Camera: {cam_name}", frame)
+                
+                # Check for window close or 'q' key
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    print("\n   'q' pressed - exiting...")
+                    running = False
+            
             # ---- Get actions ----
             # 1. Leader arm action
             arm_action = {}
@@ -267,6 +288,11 @@ Examples:
         print("  → Stopping robot...")
         robot.send_action({"x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0})
         time.sleep(0.1)
+        
+        # Close display windows
+        if args.display:
+            print("  → Closing camera windows...")
+            cv2.destroyAllWindows()
         
         # Disconnect
         print("  → Disconnecting...")
