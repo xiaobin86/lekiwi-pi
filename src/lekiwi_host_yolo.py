@@ -55,12 +55,15 @@ class LeKiwiYoloConfig:
     
     # Robot
     port: str = "/dev/ttyACM0"
+    robot_id: str = "lekiwi"
     
     # Camera
     front_camera: str = "/dev/video2"
     enable_wrist: bool = True
     camera_warmup: float = 3.0
     camera_flip: int = 0
+    camera_width: int = 640
+    camera_height: int = 480
     
     # Network
     zmq_cmd_port: int = 5555
@@ -93,8 +96,8 @@ def get_camera_config(config: LeKiwiYoloConfig) -> dict[str, CameraConfig]:
         "front": OpenCVCameraConfig(
             index_or_path=config.front_camera,
             fps=30,
-            width=640,
-            height=480,
+            width=config.camera_width,
+            height=config.camera_height,
             rotation=rotation,
             warmup_s=config.camera_warmup,
         ),
@@ -223,6 +226,7 @@ def run_host(config: LeKiwiYoloConfig):
     
     robot_config = LeKiwiConfig(
         port=config.port,
+        id=config.robot_id,
         cameras=camera_config,
     )
     
@@ -353,11 +357,14 @@ Examples:
     )
     
     # Robot
+    parser.add_argument("--robot-id", type=str, default="lekiwi", help="Robot ID (default: lekiwi)")
     parser.add_argument("--port", "-p", default="/dev/ttyACM0", help="Serial port")
     parser.add_argument("--front-camera", default="/dev/video2", help="Front camera")
     parser.add_argument("--no-wrist", action="store_true", help="Disable wrist cam")
     parser.add_argument("--warmup", type=float, default=3.0, help="Camera warmup (s)")
     parser.add_argument("--flip", type=int, default=0, choices=[0, 1, 2, 3], help="Rotation: 0=none, 1=90°, 2=180°, 3=270°")
+    parser.add_argument("--width", type=int, default=640, help="Camera width (default: 640)")
+    parser.add_argument("--height", type=int, default=480, help="Camera height (default: 480)")
     
     # Network
     parser.add_argument("--cmd-port", type=int, default=5555)
@@ -389,10 +396,13 @@ Examples:
     
     config = LeKiwiYoloConfig(
         port=args.port,
+        robot_id=args.robot_id,
         front_camera=args.front_camera,
         enable_wrist=not args.no_wrist,
         camera_warmup=args.warmup,
         camera_flip=args.flip,
+        camera_width=args.width,
+        camera_height=args.height,
         zmq_cmd_port=args.cmd_port,
         zmq_obs_port=args.obs_port,
         duration=args.duration,
