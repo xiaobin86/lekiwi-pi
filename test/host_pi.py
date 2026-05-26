@@ -112,10 +112,33 @@ class Navigator:
         
         # 检测到目标
         if detections:
+            # 选择距离中心最近的目标
+            if len(detections) > 1:
+                # 计算每个目标到图像中心的距离
+                for i, det in enumerate(detections):
+                    dx = det["center"][0] - self.cx
+                    dy = det["center"][1] - self.cy
+                    det["_dist"] = (dx ** 2 + dy ** 2) ** 0.5
+                
+                # 按距离排序，选择最近的
+                detections.sort(key=lambda x: x["_dist"])
+                
+                # 清理临时字段
+                for det in detections:
+                    det.pop("_dist", None)
+            
+            target = detections[0]
+            
+            # 如果从搜索模式切换到跟踪模式
             if self.state in ("idle", "searching"):
-                logger.info("🎯 发现目标，开始跟踪")
+                count = len(detections)
+                if count > 1:
+                    logger.info(f"🎯 发现 {count} 个目标，选择最近的一个跟踪")
+                else:
+                    logger.info("🎯 发现目标，开始跟踪")
                 self.pid.reset()
-            self.target = detections[0]
+            
+            self.target = target
             self.lost = 0
             return self._track(self.target, now)
         
