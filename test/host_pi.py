@@ -16,6 +16,13 @@ import json
 import base64
 from pathlib import Path
 
+# 先配置日志（在导入其他库之前）
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    force=True  # 强制覆盖其他库的配置
+)
+
 # 添加 LeRobot 路径
 sys.path.insert(0, str(Path.home() / "lerobot-workspace/lerobot/src"))
 
@@ -42,12 +49,11 @@ YOLO_MODEL_PATH = Path.home() / "lerobot-workspace/lekiwi-pi/models/paper_ball_d
 YOLO_CONFIDENCE = 0.5  # 置信度阈值
 
 
-def setup_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    return logging.getLogger(__name__)
+def get_logger():
+    """获取logger实例"""
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    return logger
 
 
 def create_robot_config():
@@ -82,7 +88,7 @@ def create_host_config():
 
 
 def main():
-    logger = setup_logging()
+    logger = get_logger()
     
     logger.info("=" * 60)
     logger.info(f"LeKiwi Host - Robot ID: {ROBOT_ID}")
