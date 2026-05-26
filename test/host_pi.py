@@ -156,37 +156,31 @@ class AutoNavigator:
         # 归一化偏差（-1 到 1）
         nx = dx / (IMAGE_WIDTH / 2)
         
-        # 如果水平偏差大，先旋转对准（比例控制，偏差小则转得慢）
-        if abs(nx) > CENTER_THRESHOLD:
-            # 比例控制：偏差越大转得越快，但最大不超过 ROT_SPEED
-            # nx 范围 [-1, 1]，乘以 ROT_SPEED
-            # 正值（目标在右）→ 顺时针（负速度）
-            # 负值（目标在左）→ 逆时针（正速度）
-            theta_cmd = -ROT_SPEED * nx
-            
-            # 设置最小速度，避免太小无法转动
-            if abs(theta_cmd) < 5:
-                theta_cmd = 5 if theta_cmd > 0 else -5
-            
-            self.state = "aligning"
-            return {
-                "x.vel": 0.0,
-                "y.vel": 0.0,
-                "theta.vel": theta_cmd,
-                "arrived": False,
-                "state": self.state
-            }
-        
-        # 对准后前进
-        # 距离越近速度越慢
+        # 计算前进速度（根据距离）
         speed_factor = 1.0 - (area_ratio / TARGET_AREA_RATIO)
         x_cmd = NAV_SPEED * speed_factor
-        self.state = "approaching"
+        
+        # 计算旋转速度（比例控制）
+        # nx 范围 [-1, 1]，目标在右(nx>0)需要顺时针(负)，目标在左(nx<0)需要逆时针(正)
+        theta_cmd = -ROT_SPEED * nx
+        
+        # 限制旋转速度
+        if abs(theta_cmd) > ROT_SPEED:
+            theta_cmd = ROT_SPEED if theta_cmd > 0 else -ROT_SPEED
+        
+        # 判断状态
+        if abs(nx) > CENTER_THRESHOLD:
+            self.state = "aligning"
+            # 偏差大时，降低前进速度，主要旋转
+            x_cmd = x_cmd * 0.3  # 降低至30%
+        else:
+            self.state = "approaching"
+            # 偏差小时，主要前进，微调旋转（已经包含在theta_cmd中）
         
         return {
             "x.vel": x_cmd,
             "y.vel": 0.0,
-            "theta.vel": 0.0,
+            "theta.vel": theta_cmd,
             "arrived": False,
             "state": self.state
         }
