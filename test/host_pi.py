@@ -57,11 +57,17 @@ IMAGE_AREA = IMAGE_WIDTH * IMAGE_HEIGHT
 TARGET_AREA_RATIO = 0.20  # 目标占视野20%时到达
 CENTER_THRESHOLD = 0.15   # 中心偏差阈值（图像宽度的15%）
 NAV_SPEED = 0.3          # 自动导航前进速度
-ROT_SPEED = 45           # 自动导航旋转速度
+ROT_SPEED = 30           # 自动导航旋转速度（降低避免模糊）
+SEARCH_ROT_ANGLE = 30    # 每次步进旋转角度（度）
+SEARCH_STOP_TIME = 0.5   # 停止后等待检测时间（秒）
 
+
+# 全局 logger（供 AutoNavigator 使用）
+logger = None
 
 def get_logger():
     """获取logger实例"""
+    global logger
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     return logger
@@ -76,21 +82,31 @@ class AutoNavigator:
         self.target_area = IMAGE_AREA * TARGET_AREA_RATIO
         self.state = "idle"  # idle, searching, aligning, approaching, arrived
         
-    def calculate_velocity(self, detections):
-        """根据检测结果计算底盘速度"""
-        if not detections:
-            # 没有检测到纸团，原地旋转寻找
-            self.state = "searching"
-            return {
-                "x.vel": 0.0,
-                "y.vel": 0.0,
-                "theta.vel": ROT_SPEED,
-                "arrived": False,
-                "state": self.state
-            }
+        # 步进式搜索状态
+        self.search_phase = "rotate"  # rotate, stop, detect
+        self.search_timer = 0
+        self.search_start_time = 0
         
-        # 获取第一个纸团（置信度最高的）
-        target = detections[0]
+    def calculate_velocity(self, detections, current_time):
+        """
+        根据检测结果计算底盘速度
+        
+        Args:
+            detections: 检测结果列表
+            current_time: 当前时间戳（time.time()）
+            
+        Returns:
+            dict: {"x.vel": ..., "y.vel": ..., "theta.vel": ..., "arrived": ...}
+        """
+        # 如果检测到纸团，立即切换到跟踪模式
+        if detections:
+            return self._track_target(detections[0])
+        
+        # 没有检测到纸团，执行步进式搜索
+        return self._step_search(current_time)
+    
+    def _track_target(self, target):
+        """跟踪检测到的目标"""
         x1, y1, x2, y2 = target["bbox"]
         cx, cy = target["center"]
         w, h = target["size"]
@@ -142,6 +158,74 @@ class AutoNavigator:
             "theta.vel": 0.0,
             "arrived": False,
             "state": self.state
+        }
+    
+    def _step_search(self, current_time):
+        """
+        步进式搜索：旋转一段 → 停止 → 检测 → 没找到继续
+        
+        解决连续旋转导致的图像模糊问题
+        """
+        if self.search_phase == "rotate":
+            # 开始旋转
+            if self.search_start_time == 0:
+                self.search_start_time = current_time
+                logger.info("🔍 开始步进搜索：旋转")
+            
+            # 计算已旋转的时间
+            elapsed = current_time - self.search_start_time
+            
+            # 旋转指定角度后停止（根据速度计算时间）
+            # 旋转角度 = 速度 * 时间 → 时间 = 角度 / 速度
+            rotate_duration = SEARCH_ROT_ANGLE / ROT_SPEED
+            
+            if elapsed < rotate_duration:
+                # 继续旋转
+                return {
+                    "x.vel": 0.0,
+                    "y.vel": 0.0,
+                    "theta.vel": ROT_SPEED,
+                    "arrived": False,
+                    "state": "searching"
+                }
+            else:
+                # 旋转完成，进入停止检测阶段
+                self.search_phase = "stop"
+                self.search_timer = current_time
+                logger.info("🛑 停止旋转，准备检测")
+        
+        elif self.search_phase == "stop":
+            # 停止一段时间，让图像稳定
+            elapsed = current_time - self.search_timer
+            
+            if elapsed < SEARCH_STOP_TIME:
+                # 保持停止，等待检测
+                return {
+                    "x.vel": 0.0,
+                    "y.vel": 0.0,
+                    "theta.vel": 0.0,
+                    "arrived": False,
+                    "state": "searching"
+                }
+            else:
+                # 停止时间到，进入检测阶段（由主循环完成检测后再次调用）
+                self.search_phase = "detect"
+                logger.info("📷 检测阶段")
+        
+        elif self.search_phase == "detect":
+            # 检测阶段：如果还是没检测到，重新开始旋转
+            self.search_phase = "rotate"
+            self.search_start_time = 0
+            logger.info("🔄 未检测到目标，继续搜索")
+        
+        # 默认返回搜索状态
+        self.state = "searching"
+        return {
+            "x.vel": 0.0,
+            "y.vel": 0.0,
+            "theta.vel": 0.0,
+            "arrived": False,
+            "state": "searching"
         }
 
 
@@ -373,7 +457,7 @@ def main():
                     
                     # 自动导航：根据检测结果计算并发送底盘速度
                     if auto_mode and yolo_model is not None:
-                        nav_cmd = navigator.calculate_velocity(last_detections)
+                        nav_cmd = navigator.calculate_velocity(last_detections, time.time())
                         
                         # 构建底盘动作命令
                         nav_action = {
