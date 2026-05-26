@@ -91,12 +91,24 @@ def main():
     # 加载 YOLO 模型
     logger.info("加载 YOLO 模型...")
     logger.info(f"  模型路径: {YOLO_MODEL_PATH}")
-    try:
-        yolo_model = YOLO(str(YOLO_MODEL_PATH))
-        logger.info("✅ YOLO 模型加载成功")
-    except Exception as e:
-        logger.error(f"❌ YOLO 模型加载失败: {e}")
+    
+    # 检查模型文件是否存在
+    if not YOLO_MODEL_PATH.exists():
+        logger.error(f"❌ 模型文件不存在: {YOLO_MODEL_PATH}")
+        logger.info("  请检查路径是否正确，或运行以下命令查找:")
+        logger.info("  find ~ -name 'best.pt' 2>/dev/null")
         yolo_model = None
+    else:
+        logger.info(f"  模型文件大小: {YOLO_MODEL_PATH.stat().st_size / 1024 / 1024:.2f} MB")
+        try:
+            yolo_model = YOLO(str(YOLO_MODEL_PATH))
+            logger.info("✅ YOLO 模型加载成功")
+            logger.info(f"  模型类别: {yolo_model.names}")
+        except Exception as e:
+            logger.error(f"❌ YOLO 模型加载失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            yolo_model = None
     
     # 创建配置
     robot_config = create_robot_config()
@@ -124,6 +136,10 @@ def main():
     logger.info(f"等待客户端连接...")
     logger.info(f"  命令端口: {ZMQ_CMD_PORT}")
     logger.info(f"  图像端口: {ZMQ_OBS_PORT}")
+    if yolo_model is not None:
+        logger.info("  YOLO 检测: ✅ 已启用")
+    else:
+        logger.info("  YOLO 检测: ❌ 未启用（模型加载失败）")
     logger.info("按 Ctrl+C 停止")
     
     # 主循环
@@ -188,10 +204,14 @@ def main():
                     # YOLO 推理 - 识别纸团
                     if yolo_model is not None:
                         try:
+                            infer_start = time.time()
                             results = yolo_model(frame, conf=YOLO_CONFIDENCE, verbose=False)
+                            infer_time = time.time() - infer_start
+                            
+                            # 检查是否有检测结果
                             if len(results) > 0 and len(results[0].boxes) > 0:
                                 boxes = results[0].boxes
-                                logger.info(f"🎯 检测到 {len(boxes)} 个目标:")
+                                logger.info(f"🎯 检测到 {len(boxes)} 个目标 (推理耗时: {infer_time*1000:.1f}ms):")
                                 for i, box in enumerate(boxes):
                                     # 获取框的坐标
                                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
@@ -206,8 +226,14 @@ def main():
                                               f"位置: ({x1:.1f}, {y1:.1f}) - ({x2:.1f}, {y2:.1f}), "
                                               f"中心: ({(x1+x2)/2:.1f}, {(y1+y2)/2:.1f}), "
                                               f"大小: {x2-x1:.1f}x{y2-y1:.1f}")
+                            else:
+                                # 每5秒输出一次"未检测到目标"的提示（避免日志刷屏）
+                                if int(time.time()) % 5 == 0:
+                                    logger.info(f"🔍 未检测到目标 (推理耗时: {infer_time*1000:.1f}ms)")
                         except Exception as e:
                             logger.error(f"YOLO 推理错误: {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
                     
                     ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                     if ret:
