@@ -47,6 +47,8 @@ FPS = 30
 # YOLO 模型配置
 YOLO_MODEL_PATH = Path.home() / "lerobot-workspace/lekiwi-pi/models/paper_ball_detection-1-8/weights/best.pt"
 YOLO_CONFIDENCE = 0.5  # 置信度阈值
+YOLO_INFER_SIZE = 320  # 推理分辨率（降低以提升性能）
+YOLO_SKIP_FRAMES = 2   # 每3帧检测一次（跳过2帧）
 
 
 def get_logger():
@@ -152,6 +154,8 @@ def main():
     last_cmd_time = time.time()
     watchdog_active = False
     no_command_logged = False
+    frame_counter = 0  # 帧计数器
+    last_detections = []  # 缓存上一次的检测结果
     
     try:
         while True:
@@ -161,7 +165,11 @@ def main():
             try:
                 msg = cmd_socket.recv_string(zmq.NOBLOCK)
                 data = json.loads(msg)
-                logger.info(f"收到命令: {data}")
+                # 只在有运动命令时打印（减少日志刷屏）
+                has_movement = any(k.startswith(('base.', 'x.', 'y.', 'theta.')) and v != 0 
+                                for k, v in data.items() if isinstance(v, (int, float)))
+                if has_movement:
+                    logger.info(f"收到命令: {data}")
                 
                 # 补齐从臂默认位置（如果不存在）
                 # 关节向上转时-x度，向下转时+x度，左转时+x度，右转是-x度
@@ -207,15 +215,24 @@ def main():
                     if isinstance(frame, cv2.UMat):
                         frame = frame.get()
                     
-                    # YOLO 推理 - 识别纸团
-                    detections = []
-                    if yolo_model is not None:
+                    # YOLO 推理 - 识别纸团（每3帧检测一次）
+                    frame_counter += 1
+                    if yolo_model is not None and frame_counter % (YOLO_SKIP_FRAMES + 1) == 0:
                         try:
-                            results = yolo_model(frame, conf=YOLO_CONFIDENCE, verbose=False)
+                            infer_start = time.time()
+                            # 降低分辨率推理以提升性能
+                            results = yolo_model(
+                                frame, 
+                                conf=YOLO_CONFIDENCE, 
+                                verbose=False,
+                                imgsz=YOLO_INFER_SIZE
+                            )
+                            infer_time = time.time() - infer_start
                             
                             # 检查是否有检测结果
                             if len(results) > 0 and len(results[0].boxes) > 0:
                                 boxes = results[0].boxes
+                                last_detections = []
                                 for i, box in enumerate(boxes):
                                     # 获取框的坐标
                                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
@@ -225,18 +242,26 @@ def main():
                                     cls = int(box.cls[0].cpu().numpy())
                                     cls_name = results[0].names[cls]
                                     
-                                    detections.append({
+                                    last_detections.append({
                                         "class": cls_name,
                                         "confidence": round(conf, 4),
                                         "bbox": [float(x1), float(y1), float(x2), float(y2)],
                                         "center": [float((x1+x2)/2), float((y1+y2)/2)],
                                         "size": [float(x2-x1), float(y2-y1)]
                                     })
+                                
+                                # 每10秒输出一次性能统计
+                                if frame_counter % 300 == 0:
+                                    logger.info(f"YOLO推理性能: {infer_time*1000:.1f}ms/帧, "
+                                              f"输入尺寸: {YOLO_INFER_SIZE}x{YOLO_INFER_SIZE}, "
+                                              f"检测频率: 每{YOLO_SKIP_FRAMES+1}帧")
+                            else:
+                                last_detections = []
                         except Exception as e:
                             logger.error(f"YOLO 推理错误: {e}")
                     
-                    # 将检测结果添加到 obs
-                    obs["detections"] = detections
+                    # 使用缓存的检测结果（保持显示连贯性）
+                    obs["detections"] = last_detections
                     
                     ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                     if ret:
