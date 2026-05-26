@@ -33,17 +33,6 @@ OBS_PORT = 5556
 FPS = 30
 DATA_DIR = Path(__file__).parent / "data"
 
-# 图像尺寸（用于自动导航计算）
-IMAGE_WIDTH = 640
-IMAGE_HEIGHT = 480
-IMAGE_AREA = IMAGE_WIDTH * IMAGE_HEIGHT
-
-# 自动导航配置
-TARGET_AREA_RATIO = 0.20  # 目标占视野20%时到达
-CENTER_THRESHOLD = 0.15   # 中心偏差阈值（图像宽度的15%）
-NAV_SPEED = 0.3          # 自动导航速度
-ROT_SPEED = 45           # 自动旋转速度
-
 
 # 确保数据目录存在
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -54,93 +43,6 @@ SPEED_LEVELS = [
     {"xy": 0.3, "theta": 60},   # Medium
     {"xy": 0.5, "theta": 90},   # Fast
 ]
-
-
-class AutoNavigator:
-    """自动导航控制器 - 根据YOLO检测结果自动寻路"""
-    
-    def __init__(self):
-        self.image_center_x = IMAGE_WIDTH / 2
-        self.image_center_y = IMAGE_HEIGHT / 2
-        self.target_area = IMAGE_AREA * TARGET_AREA_RATIO
-        
-    def calculate_velocity(self, detections):
-        """
-        根据检测结果计算底盘速度
-        
-        Args:
-            detections: 检测结果列表
-            
-        Returns:
-            dict: {"x.vel": ..., "y.vel": ..., "theta.vel": ..., "arrived": ...}
-        """
-        if not detections:
-            # 没有检测到纸团，原地旋转寻找
-            return {
-                "x.vel": 0.0,
-                "y.vel": 0.0,
-                "theta.vel": ROT_SPEED,
-                "arrived": False,
-                "state": "searching"
-            }
-        
-        # 获取第一个纸团（置信度最高的）
-        target = detections[0]
-        x1, y1, x2, y2 = target["bbox"]
-        cx, cy = target["center"]
-        w, h = target["size"]
-        
-        # 计算纸团面积
-        ball_area = w * h
-        area_ratio = ball_area / IMAGE_AREA
-        
-        print(f"  [自动导航] 纸团面积占比: {area_ratio:.1%} (目标: {TARGET_AREA_RATIO:.0%})")
-        
-        # 检查是否到达目标（纸团占视野20%以上）
-        if area_ratio >= TARGET_AREA_RATIO:
-            return {
-                "x.vel": 0.0,
-                "y.vel": 0.0,
-                "theta.vel": 0.0,
-                "arrived": True,
-                "state": "arrived"
-            }
-        
-        # 计算纸团中心与图像中心的偏差
-        dx = cx - self.image_center_x
-        dy = cy - self.image_center_y
-        
-        # 归一化偏差（-1 到 1）
-        nx = dx / (IMAGE_WIDTH / 2)
-        ny = dy / (IMAGE_HEIGHT / 2)
-        
-        print(f"  [自动导航] 偏差: dx={dx:.1f}, dy={dy:.1f}, nx={nx:.2f}, ny={ny:.2f}")
-        
-        # 如果水平偏差大，先旋转对准
-        if abs(nx) > CENTER_THRESHOLD:
-            # 纸团在左边，需要逆时针旋转（正方向）
-            # 纸团在右边，需要顺时针旋转（负方向）
-            theta_cmd = ROT_SPEED * nx  # nx 为正（右边）时顺时针转
-            return {
-                "x.vel": 0.0,
-                "y.vel": 0.0,
-                "theta.vel": -theta_cmd,  # 反转：目标在右边时，底盘需要顺时针转（负）
-                "arrived": False,
-                "state": "aligning"
-            }
-        
-        # 对准后前进
-        # 距离越近速度越慢（根据面积比例）
-        speed_factor = 1.0 - (area_ratio / TARGET_AREA_RATIO)
-        x_cmd = NAV_SPEED * speed_factor
-        
-        return {
-            "x.vel": x_cmd,
-            "y.vel": 0.0,
-            "theta.vel": 0.0,
-            "arrived": False,
-            "state": "approaching"
-        }
 
 
 class GamepadController:
@@ -365,8 +267,6 @@ def main():
     running = True
     frame_count = 0
     capture_requested = False
-    auto_mode = False  # 自动导航模式标志
-    navigator = AutoNavigator()  # 自动导航控制器
     current_detections = []  # 当前检测结果
     
     try:
@@ -376,51 +276,27 @@ def main():
             # 1. 获取手柄动作
             action = gamepad.get_action()
             
-            # 检测模式切换
+            # 检测模式切换命令（发送给树莓派）
             if action.get("toggle_auto", False):
-                auto_mode = not auto_mode
-                if auto_mode:
-                    print("\n🤖 切换到自动导航模式")
-                    print("  将根据YOLO检测结果自动寻路")
-                else:
-                    print("\n🎮 切换到手动控制模式")
+                print("  🔄 发送自动导航切换命令")
             
             # 检测拍照请求
             if action.get("capture_image", False):
                 capture_requested = True
                 print("  📷 拍照请求已记录，下一帧将保存")
             
-            # 2. 根据模式生成命令
-            if auto_mode:
-                # 自动导航模式：根据检测结果计算速度
-                nav_cmd = navigator.calculate_velocity(current_detections)
-                
-                if nav_cmd["arrived"]:
-                    print("\n✅ 已到达目标！持续搜索中...")
-                    print("  等待新目标或继续跟踪当前目标")
-                    # 保持自动导航模式，继续搜索（不退出）
-                    cmd = {
-                        "x.vel": 0.0,
-                        "y.vel": 0.0,
-                        "theta.vel": 0.0,
-                        "auto_state": "arrived_waiting"
-                    }
-                else:
-                    cmd = {
-                        "x.vel": nav_cmd["x.vel"],
-                        "y.vel": nav_cmd["y.vel"],
-                        "theta.vel": nav_cmd["theta.vel"],
-                        "auto_state": nav_cmd["state"]
-                    }
-                    print(f"  [自动导航] 状态: {nav_cmd['state']}, "
-                          f"速度: x={nav_cmd['x.vel']:.2f}, theta={nav_cmd['theta.vel']:.1f}")
+            # 2. 发送命令
+            # 如果是切换命令，只发送 toggle_auto
+            # 否则发送手柄动作（底盘速度）
+            cmd = {}
+            if action.get("toggle_auto", False):
+                cmd["toggle_auto"] = True
             else:
                 # 手动控制模式：使用手柄输入
-                cmd = {
-                    "x.vel": action["x.vel"],
-                    "y.vel": action["y.vel"],
-                    "theta.vel": action["theta.vel"],
-                }
+                cmd["x.vel"] = action["x.vel"]
+                cmd["y.vel"] = action["y.vel"]
+                cmd["theta.vel"] = action["theta.vel"]
+                
                 # 只在有运动时打印
                 if any(v != 0 for v in [action["x.vel"], action["y.vel"], action["theta.vel"]]):
                     print(f"发送: {cmd}")
@@ -440,11 +316,13 @@ def main():
                             save_path = DATA_DIR / f"capture_{timestamp}.jpg"
                             capture_requested = False
                         
-                        # 获取检测结果
+                        # 获取检测结果和导航状态
                         current_detections = obs.get("detections", [])
+                        auto_mode = obs.get("auto_mode", False)
+                        nav_state = obs.get("nav_state", "manual")
                         
-                        # 打印检测信息（仅在手动模式或检测到时）
-                        if not auto_mode and current_detections:
+                        # 打印检测信息
+                        if current_detections:
                             print(f"🎯 检测到 {len(current_detections)} 个目标:")
                             for i, det in enumerate(current_detections):
                                 x1, y1, x2, y2 = det["bbox"]
@@ -460,18 +338,14 @@ def main():
                         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                         if frame is not None:
                             # 添加模式文字
-                            mode_text = "AUTO NAV" if auto_mode else "MANUAL"
-                            color = (0, 255, 255) if auto_mode else (255, 255, 255)
+                            if auto_mode:
+                                mode_text = f"AUTO: {nav_state.upper()}"
+                                color = (0, 255, 255)
+                            else:
+                                mode_text = "MANUAL"
+                                color = (255, 255, 255)
                             cv2.putText(frame, mode_text, (10, 30),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-                            
-                            # 添加到达指示
-                            if auto_mode and current_detections:
-                                target = current_detections[0]
-                                area_ratio = (target["size"][0] * target["size"][1]) / IMAGE_AREA
-                                progress_text = f"Progress: {area_ratio/TARGET_AREA_RATIO:.0%}"
-                                cv2.putText(frame, progress_text, (10, 70),
-                                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                             
                             # 重新编码
                             ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])

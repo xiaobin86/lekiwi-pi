@@ -50,12 +50,99 @@ YOLO_CONFIDENCE = 0.5  # 置信度阈值
 YOLO_INFER_SIZE = 320  # 推理分辨率（降低以提升性能）
 YOLO_SKIP_FRAMES = 2   # 每3帧检测一次（跳过2帧）
 
+# 自动导航配置
+IMAGE_WIDTH = 640
+IMAGE_HEIGHT = 480
+IMAGE_AREA = IMAGE_WIDTH * IMAGE_HEIGHT
+TARGET_AREA_RATIO = 0.20  # 目标占视野20%时到达
+CENTER_THRESHOLD = 0.15   # 中心偏差阈值（图像宽度的15%）
+NAV_SPEED = 0.3          # 自动导航前进速度
+ROT_SPEED = 45           # 自动导航旋转速度
+
 
 def get_logger():
     """获取logger实例"""
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     return logger
+
+
+class AutoNavigator:
+    """自动导航控制器 - 固化在树莓派端"""
+    
+    def __init__(self):
+        self.image_center_x = IMAGE_WIDTH / 2
+        self.image_center_y = IMAGE_HEIGHT / 2
+        self.target_area = IMAGE_AREA * TARGET_AREA_RATIO
+        self.state = "idle"  # idle, searching, aligning, approaching, arrived
+        
+    def calculate_velocity(self, detections):
+        """根据检测结果计算底盘速度"""
+        if not detections:
+            # 没有检测到纸团，原地旋转寻找
+            self.state = "searching"
+            return {
+                "x.vel": 0.0,
+                "y.vel": 0.0,
+                "theta.vel": ROT_SPEED,
+                "arrived": False,
+                "state": self.state
+            }
+        
+        # 获取第一个纸团（置信度最高的）
+        target = detections[0]
+        x1, y1, x2, y2 = target["bbox"]
+        cx, cy = target["center"]
+        w, h = target["size"]
+        
+        # 计算纸团面积占比
+        ball_area = w * h
+        area_ratio = ball_area / IMAGE_AREA
+        
+        # 检查是否到达目标（纸团占视野20%以上）
+        if area_ratio >= TARGET_AREA_RATIO:
+            self.state = "arrived"
+            return {
+                "x.vel": 0.0,
+                "y.vel": 0.0,
+                "theta.vel": 0.0,
+                "arrived": True,
+                "state": self.state
+            }
+        
+        # 计算纸团中心与图像中心的偏差
+        dx = cx - self.image_center_x
+        
+        # 归一化偏差（-1 到 1）
+        nx = dx / (IMAGE_WIDTH / 2)
+        
+        # 如果水平偏差大，先旋转对准
+        if abs(nx) > CENTER_THRESHOLD:
+            # 纸团在右边(nx>0)，底盘需要顺时针旋转（负方向）
+            # 纸团在左边(nx<0)，底盘需要逆时针旋转（正方向）
+            theta_cmd = -ROT_SPEED * nx
+            self.state = "aligning"
+            return {
+                "x.vel": 0.0,
+                "y.vel": 0.0,
+                "theta.vel": theta_cmd,
+                "arrived": False,
+                "state": self.state
+            }
+        
+        # 对准后前进
+        # 距离越近速度越慢
+        speed_factor = 1.0 - (area_ratio / TARGET_AREA_RATIO)
+        x_cmd = NAV_SPEED * speed_factor
+        self.state = "approaching"
+        
+        return {
+            "x.vel": x_cmd,
+            "y.vel": 0.0,
+            "theta.vel": 0.0,
+            "arrived": False,
+            "state": self.state
+        }
 
 
 def create_robot_config():
@@ -156,6 +243,8 @@ def main():
     no_command_logged = False
     frame_counter = 0  # 帧计数器
     last_detections = []  # 缓存上一次的检测结果
+    auto_mode = False  # 自动导航模式标志
+    navigator = AutoNavigator()  # 自动导航控制器
     
     try:
         while True:
@@ -165,14 +254,28 @@ def main():
             try:
                 msg = cmd_socket.recv_string(zmq.NOBLOCK)
                 data = json.loads(msg)
+                
+                # 处理自动导航切换命令
+                if data.get("toggle_auto", False):
+                    auto_mode = not auto_mode
+                    if auto_mode:
+                        logger.info("🤖 切换到自动导航模式")
+                    else:
+                        logger.info("🎮 切换到手动控制模式")
+                        navigator.state = "idle"
+                    last_cmd_time = time.time()
+                    watchdog_active = False
+                    no_command_logged = False
+                    continue  # 切换模式后不处理其他命令
+                
                 # 只在有运动命令时打印（减少日志刷屏）
-                has_movement = any(k.startswith(('base.', 'x.', 'y.', 'theta.')) and v != 0 
-                                for k, v in data.items() if isinstance(v, (int, float)))
-                if has_movement:
-                    logger.info(f"收到命令: {data}")
+                if not auto_mode:
+                    has_movement = any(k.startswith(('base.', 'x.', 'y.', 'theta.')) and v != 0 
+                                    for k, v in data.items() if isinstance(v, (int, float)))
+                    if has_movement:
+                        logger.info(f"收到命令: {data}")
                 
                 # 补齐从臂默认位置（如果不存在）
-                # 关节向上转时-x度，向下转时+x度，左转时+x度，右转是-x度
                 arm_defaults = {
                     "arm_shoulder_pan.pos": 0.0,
                     "arm_shoulder_lift.pos": -100.0,
@@ -185,14 +288,19 @@ def main():
                     if key not in data:
                         data[key] = default_val
                 
-                robot.send_action(data)
-                last_cmd_time = time.time()
-                watchdog_active = False
-                no_command_logged = False
+                # 如果是自动导航模式，不执行手动命令（看门狗除外）
+                if not auto_mode:
+                    robot.send_action(data)
+                    last_cmd_time = time.time()
+                    watchdog_active = False
+                    no_command_logged = False
             except (zmq.Again, StopIteration):
                 # No command available, this is normal
                 if not watchdog_active and not no_command_logged:
-                    logger.info("等待命令中...")
+                    if auto_mode:
+                        logger.info("自动导航运行中...")
+                    else:
+                        logger.info("等待命令中...")
                     no_command_logged = True
             except Exception as e:
                 import traceback
@@ -262,6 +370,46 @@ def main():
                     
                     # 使用缓存的检测结果（保持显示连贯性）
                     obs["detections"] = last_detections
+                    
+                    # 自动导航：根据检测结果计算并发送底盘速度
+                    if auto_mode and yolo_model is not None:
+                        nav_cmd = navigator.calculate_velocity(last_detections)
+                        
+                        # 构建底盘动作命令
+                        nav_action = {
+                            "x.vel": nav_cmd["x.vel"],
+                            "y.vel": nav_cmd["y.vel"],
+                            "theta.vel": nav_cmd["theta.vel"],
+                            "arm_shoulder_pan.pos": 0.0,
+                            "arm_shoulder_lift.pos": -100.0,
+                            "arm_elbow_flex.pos": 90.0,
+                            "arm_wrist_flex.pos": 70.0,
+                            "arm_wrist_roll.pos": 0.0,
+                            "arm_gripper.pos": 0.0,
+                        }
+                        
+                        robot.send_action(nav_action)
+                        last_cmd_time = time.time()
+                        watchdog_active = False
+                        
+                        # 每3秒打印一次导航状态
+                        if frame_counter % 90 == 0:
+                            state_icon = {
+                                "searching": "🔍",
+                                "aligning": "🎯",
+                                "approaching": "🚀",
+                                "arrived": "✅"
+                            }
+                            icon = state_icon.get(nav_cmd["state"], "🤖")
+                            logger.info(
+                                f"{icon} 自动导航: {nav_cmd['state']}, "
+                                f"x={nav_cmd['x.vel']:.2f}, "
+                                f"theta={nav_cmd['theta.vel']:.1f}"
+                            )
+                    
+                    # 添加导航状态到观测数据
+                    obs["auto_mode"] = auto_mode
+                    obs["nav_state"] = navigator.state if auto_mode else "manual"
                     
                     ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                     if ret:
