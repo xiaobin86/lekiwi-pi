@@ -396,10 +396,15 @@ def main():
                 nav_cmd = navigator.calculate_velocity(current_detections)
                 
                 if nav_cmd["arrived"]:
-                    print("\n✅ 已到达目标！自动导航完成")
-                    print("  按 A 键切换回手动控制")
-                    auto_mode = False
-                    cmd = {"x.vel": 0.0, "y.vel": 0.0, "theta.vel": 0.0}
+                    print("\n✅ 已到达目标！持续搜索中...")
+                    print("  等待新目标或继续跟踪当前目标")
+                    # 保持自动导航模式，继续搜索（不退出）
+                    cmd = {
+                        "x.vel": 0.0,
+                        "y.vel": 0.0,
+                        "theta.vel": 0.0,
+                        "auto_state": "arrived_waiting"
+                    }
                 else:
                     cmd = {
                         "x.vel": nav_cmd["x.vel"],
