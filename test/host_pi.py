@@ -49,7 +49,7 @@ YOLO_SKIP_FRAMES = 2
 # 导航配置
 IMG_W, IMG_H = 640, 480
 IMG_AREA = IMG_W * IMG_H
-TARGET_RATIO = 0.20
+TARGET_RATIO = 0.25
 CENTER_THRESH = 0.10
 NAV_SPEED = 0.25
 ROT_SPEED = 20
@@ -267,6 +267,9 @@ def main():
     frame_cnt = 0
     detections = []
     last_nav_state = ""
+    client_detected = False  # 是否检测到client连接
+    host_start_time = time.time()  # host启动时间
+    auto_triggered = False  # 是否已经自动触发过导航
     
     try:
         while True:
@@ -277,7 +280,12 @@ def main():
                 msg = cmd_sock.recv_string(zmq.NOBLOCK)
                 data = json.loads(msg)
                 
-                # 切换自动导航
+                # 标记client已连接（收到任何命令都认为client已连接）
+                if not client_detected:
+                    client_detected = True
+                    logger.info("📱 Client已连接")
+                
+                # 切换自动导航（A键）
                 if data.get("toggle_auto"):
                     auto_mode = not auto_mode
                     navigator.reset()
@@ -299,7 +307,17 @@ def main():
             except Exception as e:
                 logger.error(f"命令错误: {e}")
             
-            # 2. 看门狗（自动导航模式下不触发，因为本机在发命令）
+            # 2. 20秒超时检查：无client则自动进入自动导航
+            if not client_detected and not auto_mode and not auto_triggered:
+                elapsed = time.time() - host_start_time
+                if elapsed >= 20:
+                    logger.info("⏱️ 20秒内无client连接，自动进入自动导航模式")
+                    auto_mode = True
+                    auto_triggered = True
+                    navigator.reset()
+                    last_cmd_t = time.time()
+            
+            # 3. 看门狗（自动导航模式下不触发）
             if not auto_mode and not watchdog_on and (time.time() - last_cmd_t > WATCHDOG_MS / 1000):
                 logger.warning("看门狗超时，停止底盘")
                 watchdog_on = True
