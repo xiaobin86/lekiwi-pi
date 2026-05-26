@@ -125,6 +125,21 @@ def main():
                 msg = cmd_socket.recv_string(zmq.NOBLOCK)
                 data = json.loads(msg)
                 logger.info(f"收到命令: {data}")
+                
+                # 补齐从臂默认位置（如果不存在）
+                # 关节向上转时-x度，向下转时+x度，左转时+x度，右转是-x度
+                arm_defaults = {
+                    "arm_shoulder_pan.pos": 0.0,
+                    "arm_shoulder_lift.pos": -100.0,
+                    "arm_elbow_flex.pos": 90.0,
+                    "arm_wrist_flex.pos": 70.0,
+                    "arm_wrist_roll.pos": 0.0,
+                    "arm_gripper.pos": 0.0,
+                }
+                for key, default_val in arm_defaults.items():
+                    if key not in data:
+                        data[key] = default_val
+                
                 robot.send_action(data)
                 last_cmd_time = time.time()
                 watchdog_active = False

@@ -18,6 +18,7 @@ import json
 import base64
 import argparse
 from pathlib import Path
+from datetime import datetime
 
 import numpy as np
 import cv2
@@ -30,6 +31,11 @@ DEFAULT_IP = "192.168.3.176"
 CMD_PORT = 5555
 OBS_PORT = 5556
 FPS = 30
+DATA_DIR = Path(__file__).parent / "data"
+
+
+# 确保数据目录存在
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # 速度档位
 SPEED_LEVELS = [
@@ -54,6 +60,7 @@ class GamepadController:
         self.BTN_RB = 7
         self.BTN_LB = 6
         self.BTN_START = 11
+        self.BTN_X = 3  # Xbox X 按钮（蓝色），用于拍照
         
         # 上一帧按钮状态（用于边沿检测）
         self.prev_states = {}
@@ -87,7 +94,7 @@ class GamepadController:
         
         speed = SPEED_LEVELS[self.speed_index]
         xy_speed = speed["xy"]
-        theta_speed = np.radians(speed["theta"])
+        theta_speed = speed["theta"]
         
         x_cmd = 0.0
         y_cmd = 0.0
@@ -99,11 +106,10 @@ class GamepadController:
             hat_x, hat_y = hat
             rb_pressed = self.joystick.get_button(self.BTN_RB)
             
-            if rb_pressed:
+            if rb_pressed and hat_x < 0:
                 # RB + 左右 = 旋转
-                if hat_x < 0:
-                    theta_cmd = theta_speed
-                elif hat_x > 0:
+                theta_cmd = theta_speed
+            elif  rb_pressed and hat_x > 0:
                     theta_cmd = -theta_speed
             else:
                 # 平移
@@ -126,10 +132,19 @@ class GamepadController:
             print(f"  速度: {names[self.speed_index]} (xy={SPEED_LEVELS[self.speed_index]['xy']})")
         self.prev_states["LB"] = lb_current
         
+        # X 按钮拍照（边沿检测）
+        x_current = self.joystick.get_button(self.BTN_X)
+        x_prev = self.prev_states.get("X", False)
+        capture_image = x_current and not x_prev
+        if capture_image:
+            print("  📷 拍照命令已发送")
+        self.prev_states["X"] = x_current
+        
         return {
             "x.vel": x_cmd,
             "y.vel": y_cmd,
             "theta.vel": theta_cmd,
+            "capture_image": capture_image,
         }
     
     def check_exit(self):
@@ -146,22 +161,30 @@ class GamepadController:
         print("手柄已断开")
 
 
-def display_frame(frame_b64, window_name="Camera"):
-    """显示图像（BGR转RGB）"""
+def display_frame(frame_b64, window_name="Camera", save_path=None):
+    """显示图像（RGB转换显示，原始BGR保存）"""
     if not frame_b64:
-        return
+        return None
     
     try:
         frame_data = base64.b64decode(frame_b64)
         nparr = np.frombuffer(frame_data, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if frame is not None:
-            # BGR to RGB
+            # 显示时转换为 RGB（颜色正确）
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             cv2.imshow(window_name, frame_rgb)
             cv2.waitKey(1)
+            
+            # 保存原始帧（BGR格式，不做转换）
+            if save_path:
+                cv2.imwrite(str(save_path), frame)
+                print(f"  💾 图像已保存(BGR): {save_path}")
+            
+            return frame
     except Exception as e:
-        pass
+        print(f"  图像处理错误: {e}")
+    return None
 
 
 def main():
@@ -203,13 +226,16 @@ def main():
     print("  D-pad 左/右     : 左平移/右平移")
     print("  RB + 左/右      : 原地旋转")
     print("  LB              : 切换速度档")
+    print("  X               : 拍照保存到 data 目录")
     print("  START           : 退出")
     print("=" * 60)
+    print(f"\n📁 图像保存目录: {DATA_DIR.absolute()}")
     
     # 主循环
     print("\n[3/3] 开始遥操作...")
     running = True
     frame_count = 0
+    capture_requested = False
     
     try:
         while running:
@@ -217,6 +243,11 @@ def main():
             
             # 1. 获取手柄动作
             action = gamepad.get_action()
+            
+            # 检测拍照请求
+            if action.get("capture_image", False):
+                capture_requested = True
+                print("  📷 拍照请求已记录，下一帧将保存")
             
             # 2. 发送命令
             if any(v != 0 for v in action.values()):
@@ -229,7 +260,14 @@ def main():
                     msg = obs_socket.recv_string(zmq.NOBLOCK)
                     obs = json.loads(msg)
                     if "front" in obs:
-                        display_frame(obs["front"], "Front Camera")
+                        # 准备保存路径
+                        save_path = None
+                        if capture_requested:
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                            save_path = DATA_DIR / f"capture_{timestamp}.jpg"
+                            capture_requested = False
+                        
+                        display_frame(obs["front"], "Front Camera", save_path)
                 except zmq.Again:
                     pass
             
