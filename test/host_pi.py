@@ -55,11 +55,12 @@ IMAGE_WIDTH = 640
 IMAGE_HEIGHT = 480
 IMAGE_AREA = IMAGE_WIDTH * IMAGE_HEIGHT
 TARGET_AREA_RATIO = 0.20  # 目标占视野20%时到达
-CENTER_THRESHOLD = 0.15   # 中心偏差阈值（图像宽度的15%）
-NAV_SPEED = 0.3          # 自动导航前进速度
-ROT_SPEED = 30           # 自动导航旋转速度（降低避免模糊）
-SEARCH_ROT_ANGLE = 30    # 每次步进旋转角度（度）
+CENTER_THRESHOLD = 0.10   # 中心偏差阈值（图像宽度的10%，更精细）
+NAV_SPEED = 0.25         # 自动导航前进速度（降低避免丢失）
+ROT_SPEED = 20           # 自动导航旋转速度（大幅降低，避免移出视野）
+SEARCH_ROT_ANGLE = 20    # 每次步进旋转角度（度）
 SEARCH_STOP_TIME = 0.5   # 停止后等待检测时间（秒）
+TRACK_LOST_FRAMES = 5    # 允许连续丢失多少帧仍继续跟踪（约0.17秒）
 
 
 # 全局 logger（供 AutoNavigator 使用）
@@ -87,6 +88,11 @@ class AutoNavigator:
         self.search_timer = 0
         self.search_start_time = 0
         
+        # 追踪缓冲
+        self.last_target = None       # 最后一次检测到的目标
+        self.lost_count = 0           # 连续丢失帧数
+        self.tracking = False         # 是否正在跟踪
+        
     def calculate_velocity(self, detections, current_time):
         """
         根据检测结果计算底盘速度
@@ -100,13 +106,31 @@ class AutoNavigator:
         """
         # 如果检测到纸团，立即切换到跟踪模式
         if detections:
-            return self._track_target(detections[0])
+            self.last_target = detections[0]
+            self.lost_count = 0
+            self.tracking = True
+            return self._track_target(self.last_target)
+        
+        # 没有检测到纸团，但正在跟踪中（可能短暂丢失）
+        if self.tracking and self.last_target is not None:
+            self.lost_count += 1
+            
+            if self.lost_count <= TRACK_LOST_FRAMES:
+                # 在允许范围内，继续向最后已知位置移动
+                logger.info(f"⚠️ 目标丢失 {self.lost_count}/{TRACK_LOST_FRAMES} 帧，继续跟踪")
+                return self._track_target(self.last_target)
+            else:
+                # 丢失太久，放弃跟踪，进入搜索模式
+                logger.info("❌ 目标丢失太久，开始搜索")
+                self.tracking = False
+                self.last_target = None
+                self.lost_count = 0
         
         # 没有检测到纸团，执行步进式搜索
         return self._step_search(current_time)
     
     def _track_target(self, target):
-        """跟踪检测到的目标"""
+        """跟踪检测到的目标（使用比例控制）"""
         x1, y1, x2, y2 = target["bbox"]
         cx, cy = target["center"]
         w, h = target["size"]
@@ -132,11 +156,18 @@ class AutoNavigator:
         # 归一化偏差（-1 到 1）
         nx = dx / (IMAGE_WIDTH / 2)
         
-        # 如果水平偏差大，先旋转对准
+        # 如果水平偏差大，先旋转对准（比例控制，偏差小则转得慢）
         if abs(nx) > CENTER_THRESHOLD:
-            # 纸团在右边(nx>0)，底盘需要顺时针旋转（负方向）
-            # 纸团在左边(nx<0)，底盘需要逆时针旋转（正方向）
+            # 比例控制：偏差越大转得越快，但最大不超过 ROT_SPEED
+            # nx 范围 [-1, 1]，乘以 ROT_SPEED
+            # 正值（目标在右）→ 顺时针（负速度）
+            # 负值（目标在左）→ 逆时针（正速度）
             theta_cmd = -ROT_SPEED * nx
+            
+            # 设置最小速度，避免太小无法转动
+            if abs(theta_cmd) < 5:
+                theta_cmd = 5 if theta_cmd > 0 else -5
+            
             self.state = "aligning"
             return {
                 "x.vel": 0.0,
@@ -407,9 +438,14 @@ def main():
                     if isinstance(frame, cv2.UMat):
                         frame = frame.get()
                     
-                    # YOLO 推理 - 识别纸团（每3帧检测一次）
+                    # YOLO 推理 - 识别纸团
                     frame_counter += 1
-                    if yolo_model is not None and frame_counter % (YOLO_SKIP_FRAMES + 1) == 0:
+                    # 自动导航模式下每帧都检测（避免丢失目标）
+                    # 手动模式下每3帧检测一次（降低负载）
+                    should_detect = (auto_mode or 
+                                   (yolo_model is not None and frame_counter % (YOLO_SKIP_FRAMES + 1) == 0))
+                    
+                    if yolo_model is not None and should_detect:
                         try:
                             infer_start = time.time()
                             # 降低分辨率推理以提升性能
