@@ -62,6 +62,12 @@ SEARCH_ROT_ANGLE = 20    # 每次步进旋转角度（度）
 SEARCH_STOP_TIME = 0.5   # 停止后等待检测时间（秒）
 TRACK_LOST_FRAMES = 5    # 允许连续丢失多少帧仍继续跟踪（约0.17秒）
 
+# PID控制器参数（用于旋转对准）
+PID_KP = 15.0             # 比例系数（基础响应）
+PID_KI = 0.1              # 积分系数（消除静态误差）
+PID_KD = 8.0              # 微分系数（抑制超调震荡）
+PID_MAX_I = 5.0           # 积分上限（防止积分饱和）
+
 
 # 全局 logger（供 AutoNavigator 使用）
 logger = None
@@ -72,6 +78,56 @@ def get_logger():
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     return logger
+
+
+class PIDController:
+    """PID控制器 - 用于平滑控制旋转速度"""
+    
+    def __init__(self, kp, ki, kd, max_i=5.0):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.max_i = max_i
+        self.reset()
+    
+    def reset(self):
+        """重置积分和上次误差"""
+        self.integral = 0.0
+        self.last_error = 0.0
+        self.first_run = True
+    
+    def compute(self, error, dt):
+        """
+        计算PID输出
+        
+        Args:
+            error: 当前误差
+            dt: 时间间隔（秒）
+        
+        Returns:
+            float: 控制输出
+        """
+        # 比例项
+        p = self.kp * error
+        
+        # 积分项（累积误差）
+        self.integral += error * dt
+        # 限制积分，防止饱和
+        self.integral = max(-self.max_i, min(self.max_i, self.integral))
+        i = self.ki * self.integral
+        
+        # 微分项（变化率）
+        if self.first_run:
+            d = 0
+            self.first_run = False
+        else:
+            d = self.kd * (error - self.last_error) / dt
+        
+        self.last_error = error
+        
+        # PID输出
+        output = p + i + d
+        return output
 
 
 class AutoNavigator:
@@ -93,6 +149,10 @@ class AutoNavigator:
         self.lost_count = 0           # 连续丢失帧数
         self.tracking = False         # 是否正在跟踪
         
+        # PID控制器（用于平滑旋转对准）
+        self.pid = PIDController(PID_KP, PID_KI, PID_KD, PID_MAX_I)
+        self.last_time = time.time()  # 上一次调用时间
+        
     def calculate_velocity(self, detections, current_time):
         """
         根据检测结果计算底盘速度
@@ -106,6 +166,10 @@ class AutoNavigator:
         """
         # 如果检测到纸团，立即切换到跟踪模式
         if detections:
+            # 如果从搜索模式切换到跟踪模式，重置PID控制器
+            if not self.tracking:
+                self.pid.reset()
+                logger.info("🎯 发现目标，开始跟踪")
             self.last_target = detections[0]
             self.lost_count = 0
             self.tracking = True
@@ -160,11 +224,17 @@ class AutoNavigator:
         speed_factor = 1.0 - (area_ratio / TARGET_AREA_RATIO)
         x_cmd = NAV_SPEED * speed_factor
         
-        # 计算旋转速度（比例控制）
-        # nx 范围 [-1, 1]，目标在右(nx>0)需要顺时针(负)，目标在左(nx<0)需要逆时针(正)
-        theta_cmd = -ROT_SPEED * nx
+        # 使用PID控制器计算旋转速度（平滑控制）
+        current_time = time.time()
+        dt = current_time - self.last_time
+        self.last_time = current_time
         
-        # 限制旋转速度
+        # 误差：目标在中心左侧(nx<0)需要逆时针(正)，右侧(nx>0)需要顺时针(负)
+        # PID输入：nx是归一化偏差 [-1, 1]
+        pid_output = self.pid.compute(nx, dt)
+        
+        # 限制旋转速度（最大ROT_SPEED）
+        theta_cmd = -pid_output  # 负号：目标在右(nx>0)需要顺时针(负速度)
         if abs(theta_cmd) > ROT_SPEED:
             theta_cmd = ROT_SPEED if theta_cmd > 0 else -ROT_SPEED
         
@@ -173,9 +243,11 @@ class AutoNavigator:
             self.state = "aligning"
             # 偏差大时，降低前进速度，主要旋转
             x_cmd = x_cmd * 0.3  # 降低至30%
+            logger.info(f"  [PID对准] 偏差nx={nx:.3f}, PID输出={pid_output:.2f}, theta={theta_cmd:.1f}")
         else:
             self.state = "approaching"
-            # 偏差小时，主要前进，微调旋转（已经包含在theta_cmd中）
+            # 偏差小时，主要前进，微调旋转（PID会自动减小）
+            # 当接近中心时，PID输出会很小，底盘几乎不转
         
         return {
             "x.vel": x_cmd,
