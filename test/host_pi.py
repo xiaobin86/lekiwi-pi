@@ -37,8 +37,6 @@ import zmq
 from ultralytics import YOLO
 from lerobot.robots.lekiwi import LeKiwi
 from lerobot.robots.lekiwi.config_lekiwi import LeKiwiConfig
-from lerobot.cameras import Cv2Rotation
-from lerobot.cameras.opencv import OpenCVCameraConfig
 
 
 # ==================== 配置 ====================
@@ -216,16 +214,12 @@ def controller_worker(cmd_queue):
     """
     logger.info("[Controller] 初始化底盘连接...")
     try:
-        # 初始化LeRobot（包含相机和底盘）
-        # 注意：相机也会初始化，但控制进程不读取图像
+        # 初始化LeRobot（只连接底盘，不初始化相机）
+        # 相机由主进程通过OpenCV直接读取，避免资源冲突
         robot = LeKiwi(LeKiwiConfig(
             port=SERIAL_PORT,
             id=ROBOT_ID,
-            cameras={"front": OpenCVCameraConfig(
-                index_or_path=FRONT_CAMERA, fps=FPS,
-                width=IMG_W, height=IMG_H,
-                rotation=Cv2Rotation.ROTATE_180, warmup_s=3.0
-            )},
+            cameras={},  # 空字典，不初始化相机
         ))
         robot.connect()
         logger.info("[Controller] 底盘连接成功")
