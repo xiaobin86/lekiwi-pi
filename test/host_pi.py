@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path.home() / "lerobot-workspace/lerobot/src"))
 
 import cv2
 import zmq
+from ultralytics import YOLO
 from lerobot.robots.lekiwi import LeKiwi
 from lerobot.robots.lekiwi.config_lekiwi import LeKiwiConfig, LeKiwiHostConfig
 from lerobot.cameras import Cv2Rotation
@@ -35,6 +36,10 @@ ZMQ_CMD_PORT = 5555
 ZMQ_OBS_PORT = 5556
 WATCHDOG_MS = 2000
 FPS = 30
+
+# YOLO 模型配置
+YOLO_MODEL_PATH = Path.home() / "lerobot-workspace/lekiwi-pi/models/paper_ball_detection-1-8/weights/best.pt"
+YOLO_CONFIDENCE = 0.5  # 置信度阈值
 
 
 def setup_logging():
@@ -82,6 +87,16 @@ def main():
     logger.info("=" * 60)
     logger.info(f"LeKiwi Host - Robot ID: {ROBOT_ID}")
     logger.info("=" * 60)
+    
+    # 加载 YOLO 模型
+    logger.info("加载 YOLO 模型...")
+    logger.info(f"  模型路径: {YOLO_MODEL_PATH}")
+    try:
+        yolo_model = YOLO(str(YOLO_MODEL_PATH))
+        logger.info("✅ YOLO 模型加载成功")
+    except Exception as e:
+        logger.error(f"❌ YOLO 模型加载失败: {e}")
+        yolo_model = None
     
     # 创建配置
     robot_config = create_robot_config()
@@ -169,6 +184,30 @@ def main():
                     frame = obs["front"]
                     if isinstance(frame, cv2.UMat):
                         frame = frame.get()
+                    
+                    # YOLO 推理 - 识别纸团
+                    if yolo_model is not None:
+                        try:
+                            results = yolo_model(frame, conf=YOLO_CONFIDENCE, verbose=False)
+                            if len(results) > 0 and len(results[0].boxes) > 0:
+                                boxes = results[0].boxes
+                                logger.info(f"🎯 检测到 {len(boxes)} 个目标:")
+                                for i, box in enumerate(boxes):
+                                    # 获取框的坐标
+                                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                                    # 获取置信度
+                                    conf = float(box.conf[0].cpu().numpy())
+                                    # 获取类别
+                                    cls = int(box.cls[0].cpu().numpy())
+                                    cls_name = results[0].names[cls]
+                                    
+                                    logger.info(f"  [{i+1}] 类别: {cls_name}, "
+                                              f"置信度: {conf:.2%}, "
+                                              f"位置: ({x1:.1f}, {y1:.1f}) - ({x2:.1f}, {y2:.1f}), "
+                                              f"中心: ({(x1+x2)/2:.1f}, {(y1+y2)/2:.1f}), "
+                                              f"大小: {x2-x1:.1f}x{y2-y1:.1f}")
+                        except Exception as e:
+                            logger.error(f"YOLO 推理错误: {e}")
                     
                     ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                     if ret:
