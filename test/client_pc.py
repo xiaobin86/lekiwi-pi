@@ -161,8 +161,8 @@ class GamepadController:
         print("手柄已断开")
 
 
-def display_frame(frame_b64, window_name="Camera", save_path=None):
-    """显示图像（RGB转换显示，原始BGR保存）"""
+def display_frame(frame_b64, window_name="Camera", save_path=None, detections=None):
+    """显示图像（RGB转换显示，绘制检测框，原始BGR保存）"""
     if not frame_b64:
         return None
     
@@ -171,6 +171,25 @@ def display_frame(frame_b64, window_name="Camera", save_path=None):
         nparr = np.frombuffer(frame_data, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if frame is not None:
+            # 绘制检测结果
+            if detections:
+                for i, det in enumerate(detections):
+                    x1, y1, x2, y2 = det["bbox"]
+                    cx, cy = det["center"]
+                    conf = det["confidence"]
+                    cls_name = det["class"]
+                    
+                    # 绘制矩形框（绿色）
+                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                    
+                    # 绘制中心点（红色）
+                    cv2.circle(frame, (int(cx), int(cy)), 5, (0, 0, 255), -1)
+                    
+                    # 绘制标签
+                    label = f"{cls_name}: {conf:.2%}"
+                    cv2.putText(frame, label, (int(x1), int(y1) - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
             # 显示时转换为 RGB（颜色正确）
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             cv2.imshow(window_name, frame_rgb)
@@ -267,7 +286,21 @@ def main():
                             save_path = DATA_DIR / f"capture_{timestamp}.jpg"
                             capture_requested = False
                         
-                        display_frame(obs["front"], "Front Camera", save_path)
+                        # 获取检测结果
+                        detections = obs.get("detections", [])
+                        
+                        # 打印检测信息
+                        if detections:
+                            print(f"🎯 检测到 {len(detections)} 个目标:")
+                            for i, det in enumerate(detections):
+                                x1, y1, x2, y2 = det["bbox"]
+                                cx, cy = det["center"]
+                                print(f"  [{i+1}] 类别: {det['class']}, "
+                                      f"置信度: {det['confidence']:.2%}, "
+                                      f"位置: ({x1:.1f}, {y1:.1f}) - ({x2:.1f}, {y2:.1f}), "
+                                      f"中心: ({cx:.1f}, {cy:.1f})")
+                        
+                        display_frame(obs["front"], "Front Camera", save_path, detections)
                 except zmq.Again:
                     pass
             

@@ -208,16 +208,14 @@ def main():
                         frame = frame.get()
                     
                     # YOLO 推理 - 识别纸团
+                    detections = []
                     if yolo_model is not None:
                         try:
-                            infer_start = time.time()
                             results = yolo_model(frame, conf=YOLO_CONFIDENCE, verbose=False)
-                            infer_time = time.time() - infer_start
                             
                             # 检查是否有检测结果
                             if len(results) > 0 and len(results[0].boxes) > 0:
                                 boxes = results[0].boxes
-                                logger.info(f"🎯 检测到 {len(boxes)} 个目标 (推理耗时: {infer_time*1000:.1f}ms):")
                                 for i, box in enumerate(boxes):
                                     # 获取框的坐标
                                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
@@ -227,19 +225,18 @@ def main():
                                     cls = int(box.cls[0].cpu().numpy())
                                     cls_name = results[0].names[cls]
                                     
-                                    logger.info(f"  [{i+1}] 类别: {cls_name}, "
-                                              f"置信度: {conf:.2%}, "
-                                              f"位置: ({x1:.1f}, {y1:.1f}) - ({x2:.1f}, {y2:.1f}), "
-                                              f"中心: ({(x1+x2)/2:.1f}, {(y1+y2)/2:.1f}), "
-                                              f"大小: {x2-x1:.1f}x{y2-y1:.1f}")
-                            else:
-                                # 每5秒输出一次"未检测到目标"的提示（避免日志刷屏）
-                                if int(time.time()) % 5 == 0:
-                                    logger.info(f"🔍 未检测到目标 (推理耗时: {infer_time*1000:.1f}ms)")
+                                    detections.append({
+                                        "class": cls_name,
+                                        "confidence": round(conf, 4),
+                                        "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                                        "center": [float((x1+x2)/2), float((y1+y2)/2)],
+                                        "size": [float(x2-x1), float(y2-y1)]
+                                    })
                         except Exception as e:
                             logger.error(f"YOLO 推理错误: {e}")
-                            import traceback
-                            logger.error(traceback.format_exc())
+                    
+                    # 将检测结果添加到 obs
+                    obs["detections"] = detections
                     
                     ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                     if ret:
