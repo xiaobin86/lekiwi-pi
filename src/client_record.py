@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """
-PC端 录制专用 Client（简化版）
+PC端 录制专用 Client
 功能：
 1. 显示front+wrist两个摄像头图像
 2. front上显示YOLO检测框和辅助信息
-3. 显示25%占比参考框（帮助定位）
+3. 纸团框水平居中(±15%)且占比20%-30%即为合格
 4. 提示用户手动调整底盘位置
 5. 按空格键开始/结束录制
 6. 按R键确认重置
@@ -28,11 +28,15 @@ FPS = 30
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-TARGET_RATIO = 0.25  # 目标占比25%
+# 合格标准（带容错）
+CENTER_THRESHOLD = 0.15  # 水平偏差 ±15%
+RATIO_MIN = 0.20         # 最小占比 20%
+RATIO_MAX = 0.30         # 最大占比 30%
+RATIO_TARGET = 0.25      # 目标占比 25%
 
 
 class RecordClient:
-    """录制客户端（简化版）"""
+    """录制客户端"""
     
     def __init__(self, robot_ip):
         self.robot_ip = robot_ip
@@ -42,7 +46,7 @@ class RecordClient:
         self.episode_count = 0
         
         # ZMQ
-        print(f"[Client] 连接树莓派 {robot_ip}...")
+        print(f"[Client] Connecting to {robot_ip}...")
         self.ctx = zmq.Context()
         
         self.cmd_sock = self.ctx.socket(zmq.PUSH)
@@ -52,25 +56,25 @@ class RecordClient:
         self.obs_sock.setsockopt(zmq.CONFLATE, 1)
         self.obs_sock.connect(f"tcp://{robot_ip}:{OBS_PORT}")
         
-        print("[Client] 已连接")
+        print("[Client] Connected")
         print("\n" + "=" * 60)
-        print("录制客户端")
+        print("Recording Client")
         print("=" * 60)
-        print("流程:")
-        print("  1. 手动调整底盘位置（观察辅助线）")
-        print("  2. 位置合适后按空格键开始录制")
-        print("  3. 用主臂遥操作控制从臂抓取")
-        print("  4. 抓取完成后按空格键结束录制")
-        print("  5. 移动底盘到新位置，按R键继续")
+        print("Workflow:")
+        print("  1. Position base manually (watch guides)")
+        print("  2. Press SPACE to start recording")
+        print("  3. Teleop with leader arm to grasp")
+        print("  4. Press SPACE to stop recording")
+        print("  5. Move base to new position, press R")
         print("=" * 60)
-        print("按键:")
-        print("  空格键: 开始/结束录制")
-        print("  R键: 确认重置，开始下一轮")
-        print("  Q键: 退出程序")
+        print("Keys:")
+        print("  SPACE: Start/Stop recording")
+        print("  R: Confirm reset, next round")
+        print("  Q: Quit")
         print("=" * 60 + "\n")
     
     def decode_image(self, img_b64):
-        """解码base64图像"""
+        """Decode base64 image"""
         if not img_b64:
             return None
         try:
@@ -81,65 +85,108 @@ class RecordClient:
             return None
     
     def draw_detection(self, frame, detections):
-        """绘制检测框和辅助信息"""
+        """Draw detection box and guides
+        
+        Pass criteria:
+        1. Box center x within ±15% of image center
+        2. Box area ratio between 20%-30%
+        """
         if frame is None:
-            return None
+            return None, False
         
         h, w = frame.shape[:2]
+        is_position_good = False
         
-        # 绘制25%占比参考框（中心区域）
-        ref_w = int(np.sqrt(TARGET_RATIO) * w)
-        ref_h = int(np.sqrt(TARGET_RATIO) * h)
-        ref_x1 = (w - ref_w) // 2
-        ref_y1 = (h - ref_h) // 2
-        ref_x2 = ref_x1 + ref_w
-        ref_y2 = ref_y1 + ref_h
-        
-        cv2.rectangle(frame, (ref_x1, ref_y1), (ref_x2, ref_y2), (255, 255, 0), 2)
-        cv2.putText(frame, f"目标: {TARGET_RATIO:.0%}", (ref_x1, ref_y1 - 10),
+        # Draw center zone (±15%)
+        center_zone_left = int(w * (0.5 - CENTER_THRESHOLD))
+        center_zone_right = int(w * (0.5 + CENTER_THRESHOLD))
+        cv2.rectangle(frame, (center_zone_left, 0), (center_zone_right, h), (255, 255, 0), 2)
+        cv2.putText(frame, "Center Zone (±15%)", (center_zone_left + 5, 30),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
         
-        # 绘制检测框
+        # Draw detection boxes
         if detections:
             for det in detections:
                 x1, y1, x2, y2 = det["bbox"]
                 cx, cy = det["center"]
                 conf = det["confidence"]
                 
-                # 检测框
+                # Detection box
                 cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 
-                # 中心点
+                # Center point
                 cv2.circle(frame, (int(cx), int(cy)), 5, (0, 0, 255), -1)
                 
-                # 标签
+                # Label
                 label = f"{det['class']}: {conf:.1%}"
                 cv2.putText(frame, label, (int(x1), int(y1) - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 
-                # 绘制从中心到检测框中心的线
-                cv2.line(frame, (w//2, h//2), (int(cx), int(cy)), (255, 255, 0), 2)
-                
-                # 计算实际占比
+                # Calculate ratio
                 det_area = (x2 - x1) * (y2 - y1)
                 img_area = w * h
                 actual_ratio = det_area / img_area
                 
-                # 在检测框下方显示占比
-                ratio_text = f"占比: {actual_ratio:.1%}"
-                ratio_color = (0, 255, 0) if actual_ratio >= TARGET_RATIO * 0.8 else (0, 165, 255)
-                cv2.putText(frame, ratio_text, (int(x1), int(y2) + 20),
+                # Check centered (±15%)
+                center_offset = abs(cx - w//2) / (w / 2)
+                is_centered = center_offset <= CENTER_THRESHOLD
+                
+                # Check ratio (20%-30%)
+                is_good_ratio = RATIO_MIN <= actual_ratio <= RATIO_MAX
+                
+                is_position_good = is_centered and is_good_ratio
+                
+                # Draw center guide line
+                if not is_centered:
+                    # Show direction to move
+                    direction = "Move Right -->" if cx < w//2 else "<-- Move Left"
+                    line_color = (0, 165, 255)
+                    cv2.line(frame, (int(cx), int(cy)), (w//2, int(cy)), line_color, 2)
+                    cv2.putText(frame, direction, (w//2 - 80, int(cy) - 15),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, line_color, 2)
+                else:
+                    cv2.line(frame, (int(cx), int(cy)), (w//2, int(cy)), (0, 255, 0), 2)
+                    cv2.putText(frame, "Centered OK", (w//2 - 50, int(cy) - 15),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                
+                # Show ratio info
+                ratio_color = (0, 255, 0) if is_good_ratio else (0, 0, 255)
+                ratio_status = "OK" if is_good_ratio else "BAD"
+                ratio_text = f"Ratio: {actual_ratio:.1%} [{ratio_status}] (Target: {RATIO_MIN:.0%}-{RATIO_MAX:.0%})"
+                cv2.putText(frame, ratio_text, (int(x1), int(y2) + 25),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, ratio_color, 2)
+                
+                # Draw ratio bar at bottom
+                bar_y = h - 35
+                bar_w = int(w * 0.4)
+                bar_h = 25
+                bar_x = (w - bar_w) // 2
+                
+                # Background
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (50, 50, 50), -1)
+                
+                # Fill (current ratio mapped to bar)
+                # Map 0%-50% to full bar
+                fill_ratio = min(actual_ratio / 0.5, 1.0)
+                fill_w = int(bar_w * fill_ratio)
+                bar_color = (0, 255, 0) if is_good_ratio else (0, 165, 255)
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h), bar_color, -1)
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (255, 255, 255), 1)
+                
+                # Target zone markers (20% and 30%)
+                target_min_x = bar_x + int(bar_w * (RATIO_MIN / 0.5))
+                target_max_x = bar_x + int(bar_w * (RATIO_MAX / 0.5))
+                cv2.line(frame, (target_min_x, bar_y - 5), (target_min_x, bar_y + bar_h + 5), (255, 255, 0), 2)
+                cv2.line(frame, (target_max_x, bar_y - 5), (target_max_x, bar_y + bar_h + 5), (255, 255, 0), 2)
+                cv2.putText(frame, f"{RATIO_MIN:.0%}", (target_min_x - 15, bar_y - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                cv2.putText(frame, f"{RATIO_MAX:.0%}", (target_max_x - 15, bar_y - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
         
-        # 绘制中心十字线
-        cv2.line(frame, (w//2, 0), (w//2, h), (255, 0, 0), 1)
-        cv2.line(frame, (0, h//2), (w, h//2), (255, 0, 0), 1)
-        cv2.circle(frame, (w//2, h//2), 5, (255, 0, 0), -1)
-        
-        return frame
+        return frame, is_position_good
     
-    def draw_info_panel(self, frame, obs):
-        """绘制信息面板"""
+    def draw_info_panel(self, frame, obs, is_position_good):
+        """Draw info panel"""
         if frame is None:
             return None
         
@@ -148,104 +195,87 @@ class RecordClient:
         episode = obs.get("episode_count", 0)
         detections = obs.get("detections", [])
         
-        # 检查位置是否合适
-        is_position_good = False
-        if detections:
-            det = detections[0]
-            x1, y1, x2, y2 = det["bbox"]
-            cx, cy = det["center"]
-            
-            # 检查居中
-            center_x, center_y = w // 2, h // 2
-            is_centered = abs(cx - center_x) < w * 0.1 and abs(cy - center_y) < h * 0.1
-            
-            # 检查占比
-            det_area = (x2 - x1) * (y2 - y1)
-            img_area = w * h
-            ratio = det_area / img_area
-            is_good_ratio = ratio >= TARGET_RATIO * 0.8
-            
-            is_position_good = is_centered and is_good_ratio
-        
-        # 半透明背景
+        # Semi-transparent background
         overlay = frame.copy()
-        cv2.rectangle(overlay, (10, 10), (380, 150), (0, 0, 0), -1)
+        cv2.rectangle(overlay, (10, 10), (420, 170), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
-        cv2.rectangle(frame, (10, 10), (380, 150), (255, 255, 255), 1)
+        cv2.rectangle(frame, (10, 10), (420, 170), (255, 255, 255), 1)
         
-        # 标题
-        cv2.putText(frame, "录制控制面板", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        # Title
+        cv2.putText(frame, "Recording Panel", (20, 35),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
         # Episode
-        cv2.putText(frame, f"Episode: {episode + 1}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        cv2.putText(frame, f"Episode: {episode + 1}", (20, 65),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
-        # 状态
-        state_text = {
-            "waiting": "等待开始",
-            "recording": "录制中",
-            "reset": "重置环境"
-        }.get(host_state, host_state)
-        
+        # Status
         state_colors = {
             "waiting": (255, 255, 0),
             "recording": (0, 0, 255),
             "reset": (255, 0, 255)
         }
         state_color = state_colors.get(host_state, (255, 255, 255))
-        cv2.putText(frame, f"状态: {state_text}", (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 2)
+        cv2.putText(frame, f"State: {host_state.upper()}", (20, 95),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 2)
         
-        # 位置评估
+        # Position evaluation
         if host_state == "waiting":
             if len(detections) == 0:
-                pos_text = "未检测到纸团"
+                pos_text = "No paper ball detected"
                 pos_color = (0, 0, 255)
             elif is_position_good:
-                pos_text = "位置合适 ✓"
+                pos_text = "Position OK! Ready to record"
                 pos_color = (0, 255, 0)
             else:
-                pos_text = "请调整底盘位置"
+                pos_text = "Adjust base position"
                 pos_color = (0, 165, 255)
             
-            cv2.putText(frame, pos_text, (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, pos_color, 2)
+            cv2.putText(frame, pos_text, (20, 125),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, pos_color, 2)
         
-        # 录制帧数
+        # Recording frame count
         if self.recording:
-            cv2.putText(frame, f"已录制: {len(self.recorded_frames)} 帧", (20, 135),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+            cv2.putText(frame, f"Frames: {len(self.recorded_frames)}", (20, 155),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         
-        # 大提示
+        # Big prompt at bottom
         if host_state == "waiting" and is_position_good:
-            self.draw_big_text(frame, "位置合适！按空格键开始录制", (0, 255, 0))
+            frame = self.draw_big_text(frame, "Press SPACE to Start Recording", (0, 255, 0))
         elif host_state == "waiting" and len(detections) == 0:
-            self.draw_big_text(frame, "请将纸团放入视野", (0, 0, 255))
+            frame = self.draw_big_text(frame, "Place paper ball in view", (0, 0, 255))
         elif host_state == "recording":
-            self.draw_big_text(frame, "录制中... 按空格键结束", (0, 0, 255))
+            frame = self.draw_big_text(frame, "Recording... Press SPACE to Stop", (0, 0, 255))
         elif host_state == "reset":
-            self.draw_big_text(frame, "请移动底盘，按R键继续", (255, 0, 255))
+            frame = self.draw_big_text(frame, "Move base, then press R to continue", (255, 0, 255))
         
         return frame
     
     def draw_big_text(self, frame, text, color):
-        """绘制大提示文字"""
+        """Draw big prompt text"""
         h, w = frame.shape[:2]
         
-        # 背景
+        # Background
         overlay = frame.copy()
-        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.2, 3)[0]
+        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)[0]
         box_w, box_h = text_size[0] + 40, text_size[1] + 40
         x1 = (w - box_w) // 2
         y1 = h - 100
+        
         cv2.rectangle(overlay, (x1, y1), (x1 + box_w, y1 + box_h), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.8, frame, 0.2, 0, frame)
         cv2.rectangle(frame, (x1, y1), (x1 + box_w, y1 + box_h), color, 2)
         
-        # 文字
+        # Text
         text_x = x1 + 20
-        text_y = y1 + box_h - 20
-        cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
+        text_y = y1 + box_h - 15
+        cv2.putText(frame, text, (text_x, text_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 3)
+        
+        return frame
     
     def display_dual_camera(self, front, wrist):
-        """显示双摄像头"""
+        """Display dual camera"""
         if front is None:
             front = np.zeros((480, 640, 3), dtype=np.uint8)
         if wrist is None:
@@ -254,8 +284,10 @@ class RecordClient:
         front_display = cv2.resize(front, (640, 480))
         wrist_display = cv2.resize(wrist, (640, 480))
         
-        cv2.putText(front_display, "Front Camera", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-        cv2.putText(wrist_display, "Wrist Camera", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+        cv2.putText(front_display, "Front Camera", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+        cv2.putText(wrist_display, "Wrist Camera", (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
         
         combined = np.hstack([front_display, wrist_display])
         scale = 0.8
@@ -264,19 +296,19 @@ class RecordClient:
         cv2.imshow("LeKiwi Record", combined)
     
     def send_command(self, cmd_dict):
-        """发送命令"""
+        """Send command"""
         try:
             self.cmd_sock.send_string(json.dumps(cmd_dict), flags=zmq.NOBLOCK)
         except:
             pass
     
     def run(self):
-        """主循环"""
+        """Main loop"""
         running = True
         
         try:
             while running:
-                # 接收观测
+                # Receive observation
                 try:
                     msg = self.obs_sock.recv_string(zmq.NOBLOCK)
                     obs = json.loads(msg)
@@ -285,19 +317,20 @@ class RecordClient:
                     time.sleep(0.001)
                     continue
                 
-                # 解码图像
+                # Decode images
                 front = self.decode_image(obs.get("front"))
                 wrist = self.decode_image(obs.get("wrist"))
                 
-                # 绘制检测和辅助信息
+                # Draw detection and guides
+                is_position_good = False
                 if front is not None:
-                    front = self.draw_detection(front, obs.get("detections", []))
-                    front = self.draw_info_panel(front, obs)
+                    front, is_position_good = self.draw_detection(front, obs.get("detections", []))
+                    front = self.draw_info_panel(front, obs, is_position_good)
                 
-                # 显示
+                # Display
                 self.display_dual_camera(front, wrist)
                 
-                # 录制时保存数据
+                # Save frames when recording
                 if self.recording and front is not None:
                     frame_data = {
                         "timestamp": time.time(),
@@ -307,39 +340,37 @@ class RecordClient:
                     }
                     self.recorded_frames.append(frame_data)
                 
-                # 键盘处理
+                # Keyboard handling
                 key = cv2.waitKey(1) & 0xFF
                 host_state = obs.get("host_state", "waiting")
                 
-                if key == ord(' '):  # 空格键
+                if key == ord(' '):  # SPACE
                     if host_state == "waiting" and not self.recording:
-                        # 开始录制
                         self.send_command({"start_recording": True})
                         self.recording = True
                         self.recorded_frames = []
-                        print(f"🎬 开始录制 Episode {self.episode_count + 1}!")
+                        print(f"Episode {self.episode_count + 1} started!")
                     
                     elif host_state == "recording" and self.recording:
-                        # 结束录制
                         self.send_command({"stop_recording": True})
                         self.recording = False
                         self.episode_count += 1
-                        print(f"✅ Episode {self.episode_count} 完成!")
+                        print(f"Episode {self.episode_count} completed!")
                         self.save_episode()
                 
-                elif key == ord('r') or key == ord('R'):  # R键
+                elif key == ord('r') or key == ord('R'):  # R
                     if host_state == "reset":
                         self.send_command({"confirm_reset": True})
-                        print("🔄 确认重置，准备下一轮...")
+                        print("Reset confirmed, next round...")
                 
-                elif key == ord('q') or key == ord('Q'):  # Q键
+                elif key == ord('q') or key == ord('Q'):  # Q
                     if self.recording:
                         self.send_command({"stop_recording": True})
                         self.save_episode()
                     running = False
         
         except KeyboardInterrupt:
-            print("\n⚠️ 用户中断")
+            print("\nInterrupted")
         finally:
             if self.recording:
                 self.save_episode()
@@ -347,18 +378,17 @@ class RecordClient:
             self.cmd_sock.close()
             self.obs_sock.close()
             self.ctx.term()
-            print(f"\n✅ 完成！共录制 {self.episode_count} 个 episodes")
-            print(f"   数据保存路径: {DATA_DIR}")
+            print(f"\nDone! Recorded {self.episode_count} episodes")
+            print(f"Data saved to: {DATA_DIR}")
     
     def save_episode(self):
-        """保存episode"""
+        """Save episode"""
         if not self.recorded_frames:
             return
         
         episode_dir = DATA_DIR / f"episode_{self.episode_count:04d}"
         episode_dir.mkdir(exist_ok=True)
         
-        # 保存图像
         for i, frame in enumerate(self.recorded_frames):
             front_path = episode_dir / f"front_{i:04d}.jpg"
             cv2.imwrite(str(front_path), frame["front"])
@@ -367,13 +397,12 @@ class RecordClient:
                 wrist_path = episode_dir / f"wrist_{i:04d}.jpg"
                 cv2.imwrite(str(wrist_path), frame["wrist"])
         
-        # 保存动作序列
         import pickle
         actions = [f["arm_state"] for f in self.recorded_frames]
         with open(episode_dir / "actions.pkl", "wb") as f:
             pickle.dump(actions, f)
         
-        print(f"  💾 已保存: {episode_dir} ({len(self.recorded_frames)} 帧)")
+        print(f"  Saved: {episode_dir} ({len(self.recorded_frames)} frames)")
 
 
 def main():
