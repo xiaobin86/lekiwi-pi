@@ -313,6 +313,14 @@ class RecordHost:
                     elif data.get("confirm_reset"):
                         self.state = "waiting"
                         logger.info(f"🔍 Episode {self.episode_count + 1} 准备就绪，等待开始...")
+                    
+                    else:
+                        # 主臂动作命令（来自 record_grasp.py 的 LeKiwiClient）
+                        # 转发给 controller_worker 执行
+                        try:
+                            self.cmd_queue.put_nowait({"type": "action", "data": data})
+                        except:
+                            pass
                 
                 except zmq.Again:
                     pass
