@@ -228,7 +228,7 @@ def main():
 
 ```bash
 # 树莓派端
-python test/host_pi.py
+python src/host_pi.py
 ```
 
 启动后输出：
@@ -329,7 +329,7 @@ ls -l /dev/ttyACM0
 ls -lh ~/lerobot-workspace/lekiwi-pi/models/.../best.pt
 
 # 查看详细错误
-python test/host_pi.py 2>&1 | tee log.txt
+python src/host_pi.py 2>&1 | tee log.txt
 ```
 
 ### 问题2：控制不响应

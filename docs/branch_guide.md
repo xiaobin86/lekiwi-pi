@@ -8,9 +8,10 @@
 
 | 分支名称 | 功能描述 | 状态 | 主要文件 |
 |---------|---------|------|---------|
-| `master` | 基础底盘遥控 + 图像传输 | 稳定 | `test/host_pi.py`, `test/client_pc.py` |
-| `feature/yolo-detection` | YOLO纸团检测 + 结果可视化 | 稳定 | `test/host_pi.py`, `test/client_pc.py`, `docs/yolo_detection_guide.md` |
-| `feature/auto-navigation` | 自动导航（基于YOLO检测） | 开发中 | `test/client_pc.py` |
+| `master` | 基础底盘遥控 + 图像传输 | 稳定 | `src/host_pi.py`, `src/client_pc.py` |
+| `feature/yolo-detection` | YOLO纸团检测 + 结果可视化 | 稳定 | `src/host_pi.py`, `src/client_pc.py`, `docs/yolo_detection_guide.md` |
+| `feature/auto-navigation` | 自动导航（基于YOLO检测） | 完成 | `src/host_pi.py`, `src/client_pc.py` |
+| `feature/multi-process` | 多进程架构优化（控制+推理并行） | 当前 | `src/host_pi.py`, `src/client_pc.py`, `docs/multi-process-guide.md` |
 
 ---
 
@@ -47,10 +48,10 @@
 **使用方式**：
 ```bash
 # 树莓派端
-python test/host_pi.py
+python src/host_pi.py
 
 # 电脑端
-python test/client_pc.py
+python src/client_pc.py
 ```
 
 ---
@@ -115,10 +116,10 @@ pip install ultralytics --no-deps
 **使用方式**：
 ```bash
 # 树莓派端
-python test/host_pi.py
+python src/host_pi.py
 
 # 电脑端
-python test/client_pc.py
+python src/client_pc.py
 ```
 
 ---
@@ -177,10 +178,10 @@ ROT_SPEED = 45             # 自动旋转速度
 **使用方式**：
 ```bash
 # 树莓派端
-python test/host_pi.py
+python src/host_pi.py
 
 # 电脑端
-python test/client_pc.py
+python src/client_pc.py
 
 # 操作步骤：
 # 1. 启动后默认手动模式（树莓派端控制）
@@ -217,7 +218,10 @@ master (基础遥控)
   │
   ├── feature/yolo-detection (YOLO检测)
   │     │
+  │     │
   │     └── feature/auto-navigation (自动导航)
+  │           │
+  │           └── feature/multi-process (多进程优化)
   │
   └── feature/gamepad-teleop (手柄遥操作)
 ```
@@ -282,8 +286,9 @@ git pull origin <branch-name>
 |------|------|------|------|
 | 阶段1 | master | 基础遥控 | ✅ 完成 |
 | 阶段2 | feature/yolo-detection | 目标检测 | ✅ 完成 |
-| 阶段3 | feature/auto-navigation | 自动导航 | 🚧 开发中 |
-| 阶段4 | - | 机械臂抓取 | 📋 计划中 |
+| 阶段3 | feature/auto-navigation | 自动导航 | ✅ 完成 |
+| 阶段4 | feature/multi-process | 多进程优化 | ✅ 当前 |
+| 阶段5 | - | 机械臂抓取 | 📋 计划中 |
 
 ---
 
@@ -292,6 +297,7 @@ git pull origin <branch-name>
 1. **分支依赖**：
    - `feature/yolo-detection` 基于 `master`
    - `feature/auto-navigation` 基于 `feature/yolo-detection`
+   - `feature/multi-process` 基于 `feature/auto-navigation`
    - 切换分支时需确保依赖已正确安装
 
 2. **模型文件**：
@@ -309,6 +315,6 @@ git pull origin <branch-name>
 
 ---
 
-**文档版本**：v1.0
-**更新日期**：2025-05-26
+**文档版本**：v1.1
+**更新日期**：2025-05-27
 **作者**：AI Assistant
