@@ -123,7 +123,8 @@ class Gamepad:
 
 
 # ==================== 显示图像 ====================
-def show_frame(frame_b64, detections=None, auto_mode=False, nav_state="idle", save_path=None):
+def show_frame(frame_b64, detections=None, auto_mode=False, nav_state="idle", 
+               grasp_progress=0.0, request_act=False, save_path=None):
     if not frame_b64:
         return
     
@@ -149,8 +150,9 @@ def show_frame(frame_b64, detections=None, auto_mode=False, nav_state="idle", sa
         mode_color = (0, 165, 255) if auto_mode else (0, 255, 0)  # Orange for AUTO, Green for MANUAL
         
         # 背景条
-        cv2.rectangle(frame, (10, 10), (250, 90), (0, 0, 0), -1)
-        cv2.rectangle(frame, (10, 10), (250, 90), (255, 255, 255), 1)
+        info_h = 110 if nav_state == "grasping" else 90
+        cv2.rectangle(frame, (10, 10), (280, info_h), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, 10), (280, info_h), (255, 255, 255), 1)
         
         # 模式状态
         cv2.putText(frame, f"Mode: {mode_text}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
@@ -158,13 +160,15 @@ def show_frame(frame_b64, detections=None, auto_mode=False, nav_state="idle", sa
         # 导航状态
         state_color = (255, 255, 255)
         if nav_state == "searching":
-            state_color = (0, 255, 255)  # Cyan
+            state_color = (255, 255, 0)  # Cyan
         elif nav_state == "aligning":
-            state_color = (0, 165, 255)  # Orange
+            state_color = (255, 165, 0)  # Orange
         elif nav_state == "approaching":
             state_color = (0, 255, 0)    # Green
         elif nav_state == "arrived":
             state_color = (0, 255, 0)    # Green
+        elif nav_state == "grasping":
+            state_color = (255, 0, 255)  # Magenta
         
         state_text = nav_state.upper() if auto_mode else "MANUAL CONTROL"
         cv2.putText(frame, f"State: {state_text}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 2)
@@ -173,6 +177,18 @@ def show_frame(frame_b64, detections=None, auto_mode=False, nav_state="idle", sa
         det_count = len(detections) if detections else 0
         det_text = f"Objects: {det_count}"
         cv2.putText(frame, det_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        # ACT抓取进度
+        if nav_state == "grasping":
+            progress_text = f"Grasp: {grasp_progress:.0%}"
+            cv2.putText(frame, progress_text, (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+            
+            # 绘制进度条
+            bar_x, bar_y, bar_w, bar_h = 10, frame.shape[0] - 30, 200, 20
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (50, 50, 50), -1)
+            fill_w = int(bar_w * grasp_progress)
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h), (255, 0, 255), -1)
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (255, 255, 255), 1)
         
         # 显示 (OpenCV使用BGR格式)
         cv2.imshow("Front Camera", frame)
@@ -273,6 +289,8 @@ def main():
                         dets = obs.get("detections", [])
                         auto_mode = obs.get("auto_mode", False)
                         nav_state = obs.get("nav_state", "idle")
+                        grasp_progress = obs.get("grasp_progress", 0.0)
+                        request_act = obs.get("request_act", False)
                         
                         # 打印检测信息
                         if dets:
@@ -280,7 +298,12 @@ def main():
                             for i, det in enumerate(dets):
                                 print(f"  [{i+1}] {det['class']} {det['confidence']:.1%}")
                         
-                        show_frame(obs["front"], dets, auto_mode, nav_state, save_path)
+                        # 打印ACT状态
+                        if nav_state == "grasping":
+                            print(f"🦾 ACT抓取中... 进度: {grasp_progress:.0%}, 请求动作: {request_act}")
+                        
+                        show_frame(obs["front"], dets, auto_mode, nav_state, 
+                                 grasp_progress, request_act, save_path)
                 except zmq.Again:
                     pass
             

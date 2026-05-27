@@ -38,6 +38,10 @@ LOST_MAX = 5
 
 PID_KP, PID_KI, PID_KD, PID_MAX_I = 15.0, 0.1, 8.0, 5.0
 
+# ACT抓取配置
+ACT_GRASP_DURATION = 5.0  # ACT抓取持续时间（秒）
+ACT_ARRIVED_DELAY = 2.0   # 到达后延迟多久开始抓取
+
 ARM_DEFAULTS = {
     "arm_shoulder_pan.pos": 0.0, "arm_shoulder_lift.pos": -100.0,
     "arm_elbow_flex.pos": 90.0, "arm_wrist_flex.pos": 70.0,
@@ -77,10 +81,48 @@ class Navigator:
         self.lost = 0
         self.search_t = 0
         self.search_phase = "rotate"
+        self.arrived_time = 0
+        self.grasp_start_time = 0
     
     def update(self, detections):
         now = time.time()
         
+        # === ACT抓取状态 ===
+        if self.state == "grasping":
+            elapsed = now - self.grasp_start_time
+            if elapsed >= ACT_GRASP_DURATION:
+                logger.info("✅ ACT抓取完成，重置状态")
+                self.reset()
+                return {"x": 0.0, "y": 0.0, "theta": 0.0, "state": "idle", "request_act": False}
+            
+            # 继续抓取，发送观测请求
+            progress = elapsed / ACT_GRASP_DURATION
+            return {
+                "x": 0.0, "y": 0.0, "theta": 0.0,
+                "state": "grasping",
+                "request_act": True,
+                "grasp_progress": progress
+            }
+        
+        # === 已到达，准备进入抓取 ===
+        if self.state == "arrived":
+            if self.arrived_time == 0:
+                self.arrived_time = now
+                logger.info("✅ 已到达目标，准备抓取...")
+            elif now - self.arrived_time >= ACT_ARRIVED_DELAY:
+                logger.info("🤖 进入ACT抓取状态")
+                self.state = "grasping"
+                self.grasp_start_time = now
+                return {
+                    "x": 0.0, "y": 0.0, "theta": 0.0,
+                    "state": "grasping",
+                    "request_act": True,
+                    "grasp_progress": 0.0
+                }
+            
+            return {"x": 0.0, "y": 0.0, "theta": 0.0, "state": "arrived", "request_act": False}
+        
+        # === 目标跟踪 ===
         if detections:
             # 多目标时选择距离中心最近的
             if len(detections) > 1:
@@ -118,9 +160,9 @@ class Navigator:
         
         if ratio >= TARGET_RATIO:
             if self.state != "arrived":
-                logger.info("✅ 已到达目标")
                 self.state = "arrived"
-            return {"x": 0.0, "y": 0.0, "theta": 0.0, "state": "arrived"}
+                self.arrived_time = 0  # 将在update中设置
+            return {"x": 0.0, "y": 0.0, "theta": 0.0, "state": "arrived", "request_act": False}
         
         nx = (cx - self.cx) / (IMG_W / 2)
         dt = now - self.last_t
@@ -134,7 +176,7 @@ class Navigator:
         else:
             self.state = "approaching"
         
-        return {"x": x_vel, "y": 0.0, "theta": theta, "state": self.state}
+        return {"x": x_vel, "y": 0.0, "theta": theta, "state": self.state, "request_act": False}
     
     def _search(self, now):
         self.state = "searching"
@@ -145,21 +187,21 @@ class Navigator:
                 logger.info("🔍 搜索中...")
             
             if now - self.search_t < SEARCH_ANGLE / ROT_SPEED:
-                return {"x": 0.0, "y": 0.0, "theta": ROT_SPEED, "state": "searching"}
+                return {"x": 0.0, "y": 0.0, "theta": ROT_SPEED, "state": "searching", "request_act": False}
             
             self.search_phase = "stop"
             self.search_t = now
         
         elif self.search_phase == "stop":
             if now - self.search_t < SEARCH_STOP:
-                return {"x": 0.0, "y": 0.0, "theta": 0.0, "state": "searching"}
+                return {"x": 0.0, "y": 0.0, "theta": 0.0, "state": "searching", "request_act": False}
             self.search_phase = "detect"
         
         elif self.search_phase == "detect":
             self.search_phase = "rotate"
             self.search_t = 0
         
-        return {"x": 0.0, "y": 0.0, "theta": 0.0, "state": "searching"}
+        return {"x": 0.0, "y": 0.0, "theta": 0.0, "state": "searching", "request_act": False}
 
 
 # ==================== 进程1：底盘控制 ====================
@@ -351,7 +393,26 @@ def main():
                     navigator.reset()
                     logger.info(f"{'🤖 自动导航' if auto_mode else '🎮 手动控制'}")
                 
-                if not auto_mode:
+                # 检查是否是ACT动作（来自PC端推理）
+                if data.get("source") == "act":
+                    # 提取ACT动作（包含机械臂位置+底盘速度）
+                    act_cmd = {
+                        "arm_shoulder_pan.pos": data.get("arm_shoulder_pan.pos", ARM_DEFAULTS["arm_shoulder_pan.pos"]),
+                        "arm_shoulder_lift.pos": data.get("arm_shoulder_lift.pos", ARM_DEFAULTS["arm_shoulder_lift.pos"]),
+                        "arm_elbow_flex.pos": data.get("arm_elbow_flex.pos", ARM_DEFAULTS["arm_elbow_flex.pos"]),
+                        "arm_wrist_flex.pos": data.get("arm_wrist_flex.pos", ARM_DEFAULTS["arm_wrist_flex.pos"]),
+                        "arm_wrist_roll.pos": data.get("arm_wrist_roll.pos", ARM_DEFAULTS["arm_wrist_roll.pos"]),
+                        "arm_gripper.pos": data.get("arm_gripper.pos", ARM_DEFAULTS["arm_gripper.pos"]),
+                        "x.vel": data.get("x.vel", 0.0),
+                        "y.vel": data.get("y.vel", 0.0),
+                        "theta.vel": data.get("theta.vel", 0.0)
+                    }
+                    try:
+                        cmd_queue.put_nowait(act_cmd)
+                        logger.debug(f"[Main] 执行ACT动作: gripper={act_cmd['arm_gripper.pos']:.1f}")
+                    except:
+                        pass
+                elif not auto_mode:
                     cmd = {
                         "x.vel": data.get("x.vel", 0.0),
                         "y.vel": data.get("y.vel", 0.0),
@@ -382,17 +443,30 @@ def main():
             except:
                 pass
             
-            # 4. 自动导航
+            # 4. 自动导航 / ACT抓取
+            request_act = False
+            grasp_progress = 0.0
+            
             if auto_mode:
                 nav = navigator.update(detections)
                 
                 if nav["state"] != last_nav_state:
                     last_nav_state = nav["state"]
-                    icons = {"searching": "🔍", "aligning": "🎯", "approaching": "🚀", "arrived": "✅"}
+                    icons = {"searching": "🔍", "aligning": "🎯", "approaching": "🚀", 
+                            "arrived": "✅", "grasping": "🦾", "idle": "⏹️"}
                     logger.info(f"{icons.get(nav['state'], '🤖')} {nav['state']}")
                 
+                # 获取ACT请求标志和进度
+                request_act = nav.get("request_act", False)
+                grasp_progress = nav.get("grasp_progress", 0.0)
+                
+                # 发送底盘命令
                 try:
-                    cmd_queue.put_nowait({"x.vel": nav["x"], "y.vel": nav["y"], "theta.vel": nav["theta"]})
+                    cmd_queue.put_nowait({
+                        "x.vel": nav["x"], 
+                        "y.vel": nav["y"], 
+                        "theta.vel": nav["theta"]
+                    })
                 except:
                     pass
             
@@ -417,7 +491,9 @@ def main():
                                 "front": base64.b64encode(buf).decode(),
                                 "detections": detections,
                                 "auto_mode": auto_mode,
-                                "nav_state": navigator.state if auto_mode else "manual"
+                                "nav_state": navigator.state if auto_mode else "manual",
+                                "request_act": request_act,
+                                "grasp_progress": grasp_progress
                             }
                             try:
                                 obs_sock.send_string(json.dumps(obs), flags=zmq.NOBLOCK)
