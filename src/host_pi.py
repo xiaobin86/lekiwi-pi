@@ -19,6 +19,7 @@ from lerobot.robots.lekiwi.config_lekiwi import LeKiwiConfig
 # ==================== 配置 ====================
 ROBOT_ID = "lekiwi"
 FRONT_CAMERA = "/dev/video2"
+WRIST_CAMERA = "/dev/video0"  # 腕部摄像头
 SERIAL_PORT = "/dev/ttyACM0"
 CMD_PORT, OBS_PORT = 5555, 5556
 WATCHDOG_MS, FPS = 2000, 30
@@ -358,22 +359,35 @@ def main():
     navigator = Navigator()
     last_nav_state = ""
     client_detected = False
-    host_start_time = time.time()
-    auto_triggered = False
     detections = []
     
     # 摄像头
     logger.info("[Main] 初始化摄像头...")
+    cap = None
+    cap_wrist = None
+    
     try:
+        # 前视摄像头
         camera_idx = int(FRONT_CAMERA.replace("/dev/video", ""))
         cap = cv2.VideoCapture(camera_idx)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
         cap.set(cv2.CAP_PROP_FPS, FPS)
-        logger.info("[Main] 摄像头已就绪")
+        
+        # 腕部摄像头
+        wrist_idx = int(WRIST_CAMERA.replace("/dev/video", ""))
+        cap_wrist = cv2.VideoCapture(wrist_idx)
+        cap_wrist.set(cv2.CAP_PROP_FRAME_WIDTH, IMG_W)
+        cap_wrist.set(cv2.CAP_PROP_FRAME_HEIGHT, IMG_H)
+        cap_wrist.set(cv2.CAP_PROP_FPS, FPS)
+        
+        logger.info("[Main] 双摄像头已就绪")
     except Exception as e:
         logger.error(f"[Main] 摄像头失败: {e}")
-        cap = None
+        if cap is None:
+            cap = None
+        if cap_wrist is None:
+            cap_wrist = None
     
     try:
         while True:
@@ -428,15 +442,7 @@ def main():
             except Exception as e:
                 logger.error(f"[Main] 命令错误: {e}")
             
-            # 2. 20秒超时自动导航
-            if not client_detected and not auto_mode and not auto_triggered:
-                if time.time() - host_start_time >= 20:
-                    logger.info("[Main] ⏱️ 20秒超时，自动导航")
-                    auto_mode = True
-                    auto_triggered = True
-                    navigator.reset()
-            
-            # 3. 获取检测结果
+            # 2. 获取检测结果
             try:
                 while not det_queue.empty():
                     detections = det_queue.get_nowait()
@@ -471,6 +477,10 @@ def main():
                     pass
             
             # 5. 读取图像
+            front_b64 = None
+            wrist_b64 = None
+            
+            # 读取前视摄像头
             if cap and cap.isOpened():
                 ret, frame = cap.read()
                 if ret and frame is not None:
@@ -483,24 +493,40 @@ def main():
                     except Exception as e:
                         logger.error(f"[Main] 共享内存错误: {e}")
                     
-                    # 编码发送
+                    # 编码前视图像
                     try:
                         ret_jpg, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
                         if ret_jpg:
-                            obs = {
-                                "front": base64.b64encode(buf).decode(),
-                                "detections": detections,
-                                "auto_mode": auto_mode,
-                                "nav_state": navigator.state if auto_mode else "manual",
-                                "request_act": request_act,
-                                "grasp_progress": grasp_progress
-                            }
-                            try:
-                                obs_sock.send_string(json.dumps(obs), flags=zmq.NOBLOCK)
-                            except:
-                                pass
+                            front_b64 = base64.b64encode(buf).decode()
                     except Exception as e:
-                        logger.error(f"[Main] 编码错误: {e}")
+                        logger.error(f"[Main] 前视图像编码错误: {e}")
+            
+            # 读取腕部摄像头
+            if cap_wrist and cap_wrist.isOpened():
+                ret_wrist, frame_wrist = cap_wrist.read()
+                if ret_wrist and frame_wrist is not None:
+                    try:
+                        ret_jpg_wrist, buf_wrist = cv2.imencode(".jpg", frame_wrist, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+                        if ret_jpg_wrist:
+                            wrist_b64 = base64.b64encode(buf_wrist).decode()
+                    except Exception as e:
+                        logger.error(f"[Main] 腕部图像编码错误: {e}")
+            
+            # 发送观测数据
+            if front_b64:
+                obs = {
+                    "front": front_b64,
+                    "wrist": wrist_b64,
+                    "detections": detections,
+                    "auto_mode": auto_mode,
+                    "nav_state": navigator.state if auto_mode else "manual",
+                    "request_act": request_act,
+                    "grasp_progress": grasp_progress
+                }
+                try:
+                    obs_sock.send_string(json.dumps(obs), flags=zmq.NOBLOCK)
+                except:
+                    pass
             
             # 6. 帧率控制
             elapsed = time.time() - loop_start
@@ -524,6 +550,8 @@ def main():
         
         if cap:
             cap.release()
+        if cap_wrist:
+            cap_wrist.release()
         
         shm.close()
         shm.unlink()

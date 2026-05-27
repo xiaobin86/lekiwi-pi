@@ -5,8 +5,14 @@ __pycache__/
 *.so
 
 # Data
-data/*.jpg
-data/*.png
+data/
+
+# Training outputs
+outputs/
+
+# Obsidian
+.obsidian/
+docs/.obsidian/
 
 # IDE
 .vscode/
