@@ -123,7 +123,7 @@ class Gamepad:
 
 
 # ==================== 显示图像 ====================
-def show_frame(frame_b64, detections=None, save_path=None):
+def show_frame(frame_b64, detections=None, auto_mode=False, nav_state="idle", save_path=None):
     if not frame_b64:
         return
     
@@ -143,6 +143,36 @@ def show_frame(frame_b64, detections=None, save_path=None):
                 cv2.circle(frame, (int(cx), int(cy)), 5, (255, 0, 0), -1)
                 label = f"{det['class']}: {det['confidence']:.2%}"
                 cv2.putText(frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # 绘制状态信息
+        mode_text = "AUTO" if auto_mode else "MANUAL"
+        mode_color = (0, 165, 255) if auto_mode else (0, 255, 0)  # Orange for AUTO, Green for MANUAL
+        
+        # 背景条
+        cv2.rectangle(frame, (10, 10), (250, 90), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, 10), (250, 90), (255, 255, 255), 1)
+        
+        # 模式状态
+        cv2.putText(frame, f"Mode: {mode_text}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
+        
+        # 导航状态
+        state_color = (255, 255, 255)
+        if nav_state == "searching":
+            state_color = (0, 255, 255)  # Cyan
+        elif nav_state == "aligning":
+            state_color = (0, 165, 255)  # Orange
+        elif nav_state == "approaching":
+            state_color = (0, 255, 0)    # Green
+        elif nav_state == "arrived":
+            state_color = (0, 255, 0)    # Green
+        
+        state_text = nav_state.upper() if auto_mode else "MANUAL CONTROL"
+        cv2.putText(frame, f"State: {state_text}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 2)
+        
+        # 检测信息
+        det_count = len(detections) if detections else 0
+        det_text = f"Objects: {det_count}"
+        cv2.putText(frame, det_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         # RGB显示
         cv2.imshow("Front Camera", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -240,6 +270,8 @@ def main():
                             capture_req = False
                         
                         dets = obs.get("detections", [])
+                        auto_mode = obs.get("auto_mode", False)
+                        nav_state = obs.get("nav_state", "idle")
                         
                         # 打印检测信息
                         if dets:
@@ -247,7 +279,7 @@ def main():
                             for i, det in enumerate(dets):
                                 print(f"  [{i+1}] {det['class']} {det['confidence']:.1%}")
                         
-                        show_frame(obs["front"], dets, save_path)
+                        show_frame(obs["front"], dets, auto_mode, nav_state, save_path)
                 except zmq.Again:
                     pass
             
