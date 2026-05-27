@@ -1,17 +1,17 @@
 #!/bin/bash
-# ACT策略训练脚本
-# 使用LeRobot训练ACT策略模型
+# ACT策略训练脚本（6-DOF机械臂版本）
+# 使用LeRobot训练ACT策略模型（只控制机械臂，底盘由规则控制）
 
 set -e
 
 echo "=================================="
-echo "LeKiwi ACT 策略训练"
+echo "LeKiwi ACT 6-DOF机械臂策略训练"
 echo "=================================="
 
 # 配置
 DATASET_REPO="your_username/lekiwi_grasp_paper_ball"  # 替换为你的数据集
-OUTPUT_DIR="outputs/lekiwi_grasp_act"
-JOB_NAME="lekiwi_grasp"
+OUTPUT_DIR="outputs/lekiwi_grasp_act_arm_only"
+JOB_NAME="lekiwi_grasp_arm"
 DEVICE="cuda"
 
 # 检查参数
@@ -26,6 +26,7 @@ fi
 echo "数据集: $DATASET_REPO"
 echo "输出目录: $OUTPUT_DIR"
 echo "设备: $DEVICE"
+echo "注意: 训练6-DOF机械臂模型（不含底盘控制）"
 echo ""
 
 # 激活环境
@@ -33,8 +34,8 @@ conda activate lerobot
 
 cd ~/lerobot-workspace/lerobot
 
-# 训练ACT策略
-echo "开始训练ACT策略..."
+# 训练ACT策略（6-DOF）
+echo "开始训练6-DOF ACT策略..."
 lerobot-train \
     --policy.type=act \
     --dataset.repo_id=$DATASET_REPO \
@@ -44,6 +45,10 @@ lerobot-train \
     --wandb.enable=true \
     --batch_size=16 \
     --num_workers=4 \
+    \
+    # 6-DOF配置（机械臂-only）
+    --policy.input_features.state.shape=[6] \
+    --policy.output_features.action.shape=[6] \
     \
     # ACT策略配置
     --policy.n_action_steps=8 \
@@ -80,6 +85,8 @@ echo "开始评估..."
 lerobot-eval \
     --policy.type=act \
     --policy.pretrained_path=$OUTPUT_DIR/checkpoints/last \
+    --policy.input_features.state.shape=[6] \
+    --policy.output_features.action.shape=[6] \
     --dataset.repo_id=$DATASET_REPO \
     --output_dir=$OUTPUT_DIR/eval \
     --device=$DEVICE

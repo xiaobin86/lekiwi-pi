@@ -1,23 +1,23 @@
-# LeKiwi ACT策略配置
-# 用于训练抓取纸团任务
+# LeKiwi 6-DOF机械臂 ACT策略配置
+# 用于训练抓取纸团任务（底盘静止，只控制机械臂）
 
 # 策略类型
 policy:
   type: act
   
-  # 观测和动作特征
+  # 观测和动作特征（6-DOF机械臂，不含底盘）
   input_features:
     observation.images.front:
       type: image
       shape: [3, 480, 640]
     observation.state:
       type: state
-      shape: [9]
+      shape: [6]  # 只包含机械臂6关节
   
   output_features:
     action:
       type: state
-      shape: [9]
+      shape: [6]  # 只输出机械臂6关节
   
   # 动作分块配置
   n_action_steps: 8        # 预测未来8步动作
