@@ -174,13 +174,14 @@ def show_frame(frame_b64, detections=None, auto_mode=False, nav_state="idle", sa
         det_text = f"Objects: {det_count}"
         cv2.putText(frame, det_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
-        # RGB显示
-        cv2.imshow("Front Camera", cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        # 显示 (OpenCV使用BGR格式)
+        cv2.imshow("Front Camera", frame)
         cv2.waitKey(1)
         
-        # 保存
+        # 保存 (转为RGB保存)
         if save_path:
-            cv2.imwrite(str(save_path), frame)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            cv2.imwrite(str(save_path), rgb_frame)
             print(f"  💾 已保存: {save_path}")
     
     except Exception as e:
