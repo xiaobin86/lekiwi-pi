@@ -86,6 +86,8 @@ class ACTInference:
         self.device = device if torch.cuda.is_available() else "cpu"
         self.policy = None
         self.dataset = None
+        self.action_mean = None
+        self.action_std = None
         
         self._load_model()
     
@@ -149,6 +151,20 @@ class ACTInference:
             self.policy = self.policy.from_pretrained(str(self.model_path))
             self.policy.eval()
             self.policy.to(self.device)
+            
+            # 加载后处理器参数（用于手动反归一化）
+            postprocessor_path = self.model_path / "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+            if postprocessor_path.exists():
+                from safetensors.torch import load_file
+                pp_state = load_file(str(postprocessor_path))
+                self.action_mean = pp_state.get("action.mean", None)
+                self.action_std = pp_state.get("action.std", None)
+                if self.action_mean is not None and self.action_std is not None:
+                    self.action_mean = self.action_mean.cpu().numpy()
+                    self.action_std = self.action_std.cpu().numpy()
+                    logger.info(f"[ACT] 反归一化参数已加载")
+                    logger.info(f"[ACT]   action.mean: {self.action_mean[:6]}")
+                    logger.info(f"[ACT]   action.std:  {self.action_std[:6]}")
             
             logger.info(f"[ACT] ✅ 模型加载完成，设备: {self.device}")
             return True
@@ -218,7 +234,15 @@ class ACTInference:
             if isinstance(action, torch.Tensor):
                 action = action.cpu().numpy()
             
-            logger.info(f"[ACT] 推理完成: {action}")
+            logger.info(f"[ACT] 原始输出(归一化): {action}")
+            
+            # 反归一化：actual = normalized * std + mean
+            if self.action_mean is not None and self.action_std is not None:
+                action = action * self.action_std[:action.shape[-1]] + self.action_mean[:action.shape[-1]]
+                logger.info(f"[ACT] 反归一化后(角度): {action}")
+            else:
+                logger.warning("[ACT] 未加载反归一化参数，输出可能不正确")
+            
             return action
             
         except Exception as e:
