@@ -557,7 +557,7 @@ def main():
     running = True
     capture_req = False
     last_act_time = 0
-    act_interval = 1.0 / 30.0
+    act_interval = 0.1  # 100ms, 10Hz 推理频率
     current_front_image = None
     current_wrist_image = None
     act_action = None  # 当前ACT动作
@@ -630,7 +630,8 @@ def main():
             cmd = {}
             
             if request_act:
-                logger.info(f"🤖 request_act=True, front_image={current_front_image is not None}, interval={time.time() - last_act_time:.3f}s")
+                time_since_last = time.time() - last_act_time
+                logger.info(f"🤖 request_act=True, front_image={current_front_image is not None}, time_since_last={time_since_last:.3f}s, will_infer={time_since_last >= act_interval}")
             
             if request_act and current_front_image is not None:
                 # === ACT抓取阶段：运行推理并发送机械臂动作 ===
