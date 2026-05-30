@@ -125,29 +125,27 @@ class ACTInference:
             logger.info(f"[ACT] 输入特征: {list(config.input_features.keys())}")
             logger.info(f"[ACT] 输出特征: {list(config.output_features.keys())}")
             
-            # 从配置文件构建最小化数据集元信息（不需要加载完整数据集）
-            from lerobot.datasets.utils import DatasetMetadata, FeatureShape
-            
-            features = {}
-            for key, feat in config.input_features.items():
-                if hasattr(feat, 'shape'):
-                    features[key] = FeatureShape(shape=feat.shape)
+            # 加载数据集元信息（make_policy需要ds_meta）
+            logger.info(f"[ACT] 加载数据集元信息...")
+            if dataset_root and Path(dataset_root).exists():
+                self.dataset = LeRobotDataset(repo_id='acelan', root=dataset_root)
+            else:
+                # 尝试使用默认路径
+                default_data_path = Path.home() / "lerobot-workspace/lekiwi-pi/data"
+                if default_data_path.exists():
+                    data_dirs = list(default_data_path.glob("acelan_*"))
+                    if data_dirs:
+                        dataset_root = str(data_dirs[0])
+                        logger.info(f"[ACT] 使用默认数据集: {dataset_root}")
+                        self.dataset = LeRobotDataset(repo_id='acelan', root=dataset_root)
+                    else:
+                        logger.error("[ACT] 找不到数据集目录")
+                        return False
                 else:
-                    features[key] = FeatureShape(shape=feat['shape'])
+                    logger.error("[ACT] 数据集路径不存在")
+                    return False
             
-            for key, feat in config.output_features.items():
-                if hasattr(feat, 'shape'):
-                    features[key] = FeatureShape(shape=feat.shape)
-                else:
-                    features[key] = FeatureShape(shape=feat['shape'])
-            
-            ds_meta = DatasetMetadata(
-                features=features,
-                stats={},  # 推理时不需要stats，模型已包含归一化参数
-                info={"fps": 30}
-            )
-            
-            self.policy = make_policy(cfg=config, ds_meta=ds_meta)
+            self.policy = make_policy(cfg=config, ds_meta=self.dataset.meta)
             self.policy = self.policy.from_pretrained(str(self.model_path))
             self.policy.eval()
             self.policy.to(self.device)
