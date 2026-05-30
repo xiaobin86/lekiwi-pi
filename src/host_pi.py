@@ -245,7 +245,9 @@ def controller_worker(cmd_queue):
                 last_cmd_t = time.time()
                 watchdog_on = False
             except Exception as e:
-                logger.error(f"[Controller] 命令执行错误: {e}")
+                import traceback
+                logger.error(f"[Controller] 命令执行错误: {type(e).__name__}: {e}")
+                logger.error(traceback.format_exc())
                 pass
             
             if not watchdog_on and (time.time() - last_cmd_t > WATCHDOG_MS / 1000):
