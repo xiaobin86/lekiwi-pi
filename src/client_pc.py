@@ -643,8 +643,8 @@ def main():
                         act_action = act_result[0] if len(act_result.shape) > 1 else act_result
                         logger.info(f"✅ ACT原始推理角度: {act_action[:6]}")
                         
-                        # 安全限制：机械臂关节限制在 ±10 度范围内（防止损坏）
-                        SAFE_ANGLE_LIMIT = 10.0
+                        # 安全限制：机械臂关节限制在 ±45 度范围内（平衡安全与抓取能力）
+                        SAFE_ANGLE_LIMIT = 45.0
                         if len(act_action) >= 6:
                             # 只限制前6个关节（不包括底盘速度）
                             clamped_angles = np.clip(act_action[:6], -SAFE_ANGLE_LIMIT, SAFE_ANGLE_LIMIT)

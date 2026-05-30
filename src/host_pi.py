@@ -40,12 +40,12 @@ LOST_MAX = 5
 PID_KP, PID_KI, PID_KD, PID_MAX_I = 15.0, 0.1, 8.0, 5.0
 
 # ACT抓取配置
-ACT_GRASP_DURATION = 5.0  # ACT抓取持续时间（秒）
-ACT_ARRIVED_DELAY = 2.0   # 到达后延迟多久开始抓取
+ACT_GRASP_DURATION = 15.0  # ACT抓取持续时间（秒），给机械臂足够时间
+ACT_ARRIVED_DELAY = 2.0    # 到达后延迟多久开始抓取
 
 ARM_DEFAULTS = {
-    "arm_shoulder_pan.pos": 0.0, "arm_shoulder_lift.pos": -100.0,
-    "arm_elbow_flex.pos": 90.0, "arm_wrist_flex.pos": 70.0,
+    "arm_shoulder_pan.pos": 0.0, "arm_shoulder_lift.pos": -60.0,
+    "arm_elbow_flex.pos": 60.0, "arm_wrist_flex.pos": 0.0,
     "arm_wrist_roll.pos": 0.0, "arm_gripper.pos": 0.0,
 }
 
