@@ -229,17 +229,38 @@ def controller_worker(cmd_queue):
                 if cmd is None:
                     break
                 
-                # 构建完整命令
-                full_cmd = {**ARM_DEFAULTS, **cmd}
+                # 构建完整命令（去掉 arm_ 前缀，LeKiwi 可能期望原始键名）
+                full_cmd = {**ARM_DEFAULTS}
+                
+                # 转换键名：arm_shoulder_pan.pos -> shoulder_pan.pos
+                key_mapping = {
+                    "arm_shoulder_pan.pos": "shoulder_pan.pos",
+                    "arm_shoulder_lift.pos": "shoulder_lift.pos",
+                    "arm_elbow_flex.pos": "elbow_flex.pos",
+                    "arm_wrist_flex.pos": "wrist_flex.pos",
+                    "arm_wrist_roll.pos": "wrist_roll.pos",
+                    "arm_gripper.pos": "gripper.pos",
+                }
+                
+                for old_key, new_key in key_mapping.items():
+                    if old_key in cmd:
+                        full_cmd[new_key] = cmd[old_key]
+                    elif new_key in cmd:
+                        full_cmd[new_key] = cmd[new_key]
+                
+                # 添加底盘速度
+                for vel_key in ["x.vel", "y.vel", "theta.vel"]:
+                    if vel_key in cmd:
+                        full_cmd[vel_key] = cmd[vel_key]
                 
                 # 检查是否是ACT命令并记录
-                if "arm_shoulder_pan.pos" in cmd:
-                    logger.info(f"[Controller] 📤 发送机械臂命令: pan={full_cmd.get('arm_shoulder_pan.pos', 0):.1f}, "
-                              f"lift={full_cmd.get('arm_shoulder_lift.pos', 0):.1f}, "
-                              f"elbow={full_cmd.get('arm_elbow_flex.pos', 0):.1f}, "
-                              f"wrist_flex={full_cmd.get('arm_wrist_flex.pos', 0):.1f}, "
-                              f"wrist_roll={full_cmd.get('arm_wrist_roll.pos', 0):.1f}, "
-                              f"gripper={full_cmd.get('arm_gripper.pos', 0):.1f}")
+                if "shoulder_pan.pos" in full_cmd and full_cmd["shoulder_pan.pos"] != ARM_DEFAULTS["arm_shoulder_pan.pos"]:
+                    logger.info(f"[Controller] 📤 发送机械臂命令: pan={full_cmd.get('shoulder_pan.pos', 0):.1f}, "
+                              f"lift={full_cmd.get('shoulder_lift.pos', 0):.1f}, "
+                              f"elbow={full_cmd.get('elbow_flex.pos', 0):.1f}, "
+                              f"wrist_flex={full_cmd.get('wrist_flex.pos', 0):.1f}, "
+                              f"wrist_roll={full_cmd.get('wrist_roll.pos', 0):.1f}, "
+                              f"gripper={full_cmd.get('gripper.pos', 0):.1f}")
                 
                 robot.send_action(full_cmd)
                 last_cmd_t = time.time()
