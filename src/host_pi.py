@@ -244,10 +244,8 @@ def controller_worker(cmd_queue):
                 robot.send_action(full_cmd)
                 last_cmd_t = time.time()
                 watchdog_on = False
-            except Exception as e:
-                import traceback
-                logger.error(f"[Controller] 命令执行错误: {type(e).__name__}: {e}")
-                logger.error(traceback.format_exc())
+            except:
+                # queue.Empty is normal when no command available
                 pass
             
             if not watchdog_on and (time.time() - last_cmd_t > WATCHDOG_MS / 1000):
