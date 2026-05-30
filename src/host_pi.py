@@ -228,10 +228,24 @@ def controller_worker(cmd_queue):
                 cmd = cmd_queue.get(timeout=0.001)
                 if cmd is None:
                     break
-                robot.send_action({**ARM_DEFAULTS, **cmd})
+                
+                # 构建完整命令
+                full_cmd = {**ARM_DEFAULTS, **cmd}
+                
+                # 检查是否是ACT命令并记录
+                if "arm_shoulder_pan.pos" in cmd:
+                    logger.info(f"[Controller] 📤 发送机械臂命令: pan={full_cmd.get('arm_shoulder_pan.pos', 0):.1f}, "
+                              f"lift={full_cmd.get('arm_shoulder_lift.pos', 0):.1f}, "
+                              f"elbow={full_cmd.get('arm_elbow_flex.pos', 0):.1f}, "
+                              f"wrist_flex={full_cmd.get('arm_wrist_flex.pos', 0):.1f}, "
+                              f"wrist_roll={full_cmd.get('arm_wrist_roll.pos', 0):.1f}, "
+                              f"gripper={full_cmd.get('arm_gripper.pos', 0):.1f}")
+                
+                robot.send_action(full_cmd)
                 last_cmd_t = time.time()
                 watchdog_on = False
-            except:
+            except Exception as e:
+                logger.error(f"[Controller] 命令执行错误: {e}")
                 pass
             
             if not watchdog_on and (time.time() - last_cmd_t > WATCHDOG_MS / 1000):
