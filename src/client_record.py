@@ -59,16 +59,18 @@ IMG_WIDTH, IMG_HEIGHT = 640, 480
 class RecordClient:
     """SO101主臂遥操作 + LeRobotDataset视频录制"""
     
-    def __init__(self, robot_ip, arm_port, repo_id=DATASET_REPO_ID, root=DATASET_ROOT):
+    def __init__(self, robot_ip, arm_port, repo_id=DATASET_REPO_ID, root=DATASET_ROOT, max_rounds=20):
         self.robot_ip = robot_ip
         self.arm_port = arm_port
         self.repo_id = repo_id
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self.max_rounds = max_rounds
         
         self.frame_count = 0
         self.recording = False
         self.episode_count = 0
+        self.client_state = "waiting"  # waiting, recording, reset
         self.teleop_active = True  # 遥操作始终开启
         
         # 1. 连接主臂（SO101）
@@ -173,16 +175,16 @@ class RecordClient:
         print("\n" + "=" * 60)
         print("LeKiwi SO101 录制客户端（视频格式）")
         print("=" * 60)
+        print(f"计划录制: {self.max_rounds} 轮")
         print("流程：")
         print("  1. 手动调整底盘位置（观察辅助线）")
         print("  2. 按空格键开始录制")
         print("  3. 移动主臂控制从臂抓取纸团")
-        print("  4. 按空格键结束录制")
-        print("  5. 移动底盘到新位置，按R键继续")
+        print("  4. 按空格键结束录制，进入重置")
+        print("  5. 移动底盘到新位置，按空格键继续下一轮")
         print("=" * 60)
         print("按键：")
-        print("  空格: 开始/结束录制")
-        print("  R: 确认重置，下一轮")
+        print("  空格: 循环切换 [准备 → 录制 → 重置 → 准备]")
         print("  Q: 退出并保存数据集")
         print("=" * 60 + "\n")
     
@@ -314,14 +316,18 @@ class RecordClient:
         cv2.putText(frame, f"State: {host_state.upper()}", (20, 95),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 2)
         
-        if host_state == "waiting":
+        # 显示进度
+        cv2.putText(frame, f"Progress: {self.episode_count}/{self.max_rounds}", (20, 125),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        
+        if self.client_state == "waiting":
             if len(detections) == 0:
                 pos_text, pos_color = "No paper ball detected", (0, 0, 255)
             elif is_position_good:
                 pos_text, pos_color = "Position OK! Press SPACE", (0, 255, 0)
             else:
                 pos_text, pos_color = "Adjust base position", (0, 165, 255)
-            cv2.putText(frame, pos_text, (20, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.6, pos_color, 2)
+            cv2.putText(frame, pos_text, (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.6, pos_color, 2)
         
         if self.recording:
             cv2.putText(frame, f"Recording...", (20, 155),
@@ -332,14 +338,14 @@ class RecordClient:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
         
         # 底部提示
-        if host_state == "waiting" and is_position_good:
+        if self.client_state == "waiting" and is_position_good:
             frame = self._draw_big_text(frame, "Press SPACE to Start", (0, 255, 0))
-        elif host_state == "waiting" and len(detections) == 0:
+        elif self.client_state == "waiting" and len(detections) == 0:
             frame = self._draw_big_text(frame, "Place paper ball in view", (0, 0, 255))
-        elif host_state == "recording":
+        elif self.client_state == "recording":
             frame = self._draw_big_text(frame, "Recording... Press SPACE to Stop", (0, 0, 255))
-        elif host_state == "reset":
-            frame = self._draw_big_text(frame, "Move base, then press R", (255, 0, 255))
+        elif self.client_state == "reset":
+            frame = self._draw_big_text(frame, "Move base, then press SPACE", (255, 0, 255))
         
         return frame
     
@@ -480,31 +486,41 @@ class RecordClient:
                 
                 # 6. 键盘处理
                 key = cv2.waitKey(1) & 0xFF
-                host_state = obs.get("host_state", "waiting")
                 
-                if key == ord(' '):  # 空格
-                    if not self.recording:
-                        # 开始录制（不依赖host_state，直接开始）
+                if key == ord(' '):  # 空格 - 循环切换状态
+                    if self.client_state == "waiting":
+                        # 开始录制
                         self.send_command({"start_recording": True})
                         self.recording = True
+                        self.client_state = "recording"
                         self.episode_count += 1
-                        print(f"🎬 Episode {self.episode_count} 开始录制!")
-                    else:
-                        # 停止录制（不依赖host_state，直接停止）
+                        print(f"🎬 Episode {self.episode_count}/{self.max_rounds} 开始录制!")
+                    
+                    elif self.client_state == "recording":
+                        # 停止录制，进入重置
                         self.send_command({"stop_recording": True})
                         self.recording = False
-                        print(f"✅ Episode {self.episode_count} 完成!")
+                        self.client_state = "reset"
+                        print(f"✅ Episode {self.episode_count} 完成! 请移动底盘到新位置...")
                         
                         # 保存episode（触发视频编码）
                         self.dataset.save_episode()
                         print(f"💾 已保存 Episode {self.episode_count}")
-                
-                elif key == ord('r') or key == ord('R'):
-                    if host_state == "reset":
+                    
+                    elif self.client_state == "reset":
+                        # 确认重置，回到准备状态
                         self.send_command({"confirm_reset": True})
-                        print("🔄 重置确认，开始下一轮...")
+                        
+                        # 检查是否达到最大轮数
+                        if self.episode_count >= self.max_rounds:
+                            print(f"🎉 已完成全部 {self.max_rounds} 轮录制!")
+                            running = False
+                        else:
+                            self.client_state = "waiting"
+                            print(f"🔄 准备录制 Episode {self.episode_count + 1}/{self.max_rounds}")
                 
                 elif key == ord('q') or key == ord('Q'):
+                    print("🚪 用户退出...")
                     if self.recording:
                         self.send_command({"stop_recording": True})
                         self.dataset.save_episode()
@@ -544,6 +560,7 @@ def main():
     parser.add_argument("--arm-port", default=DEFAULT_ARM_PORT, help="主臂串口")
     parser.add_argument("--repo-id", default=DATASET_REPO_ID, help="数据集ID")
     parser.add_argument("--root", default=str(DATASET_ROOT), help="数据集根目录")
+    parser.add_argument("--max-rounds", type=int, default=20, help="录制轮数（默认20）")
     args = parser.parse_args()
     
     client = RecordClient(
@@ -551,6 +568,7 @@ def main():
         arm_port=args.arm_port,
         repo_id=args.repo_id,
         root=args.root,
+        max_rounds=args.max_rounds,
     )
     client.run()
 
