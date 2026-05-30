@@ -641,18 +641,23 @@ def main():
                     
                     if act_result is not None:
                         act_action = act_result[0] if len(act_result.shape) > 1 else act_result
-                        logger.info(f"✅ ACT推理结果: {act_action}")
+                        logger.info(f"✅ ACT原始推理角度: {act_action[:6]}")
                         
-                        # 发送ACT动作（机械臂+静止底盘）
+                        # 安全限制：机械臂关节限制在 ±10 度范围内（防止损坏）
+                        SAFE_ANGLE_LIMIT = 10.0
                         if len(act_action) >= 6:
+                            # 只限制前6个关节（不包括底盘速度）
+                            clamped_angles = np.clip(act_action[:6], -SAFE_ANGLE_LIMIT, SAFE_ANGLE_LIMIT)
+                            logger.info(f"🔒 安全限制后(±{SAFE_ANGLE_LIMIT}°): {clamped_angles}")
+                            
                             cmd = {
                                 "source": "act",
-                                "arm_shoulder_pan.pos": float(act_action[0]),
-                                "arm_shoulder_lift.pos": float(act_action[1]),
-                                "arm_elbow_flex.pos": float(act_action[2]),
-                                "arm_wrist_flex.pos": float(act_action[3]),
-                                "arm_wrist_roll.pos": float(act_action[4]),
-                                "arm_gripper.pos": float(act_action[5]),
+                                "arm_shoulder_pan.pos": float(clamped_angles[0]),
+                                "arm_shoulder_lift.pos": float(clamped_angles[1]),
+                                "arm_elbow_flex.pos": float(clamped_angles[2]),
+                                "arm_wrist_flex.pos": float(clamped_angles[3]),
+                                "arm_wrist_roll.pos": float(clamped_angles[4]),
+                                "arm_gripper.pos": float(clamped_angles[5]),
                                 "x.vel": 0.0,
                                 "y.vel": 0.0,
                                 "theta.vel": 0.0,
