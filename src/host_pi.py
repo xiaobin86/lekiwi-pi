@@ -333,6 +333,16 @@ def main():
     cmd_queue = Queue(maxsize=10)
     det_queue = Queue(maxsize=1)
     
+    # 在主进程中进行校准（子进程没有stdin，无法交互）
+    logger.info("[Main] 检查机器人校准...")
+    try:
+        cal_robot = LeKiwi(LeKiwiConfig(port=SERIAL_PORT, id=ROBOT_ID, cameras={}))
+        cal_robot.connect(calibrate=True)
+        cal_robot.disconnect()
+        logger.info("[Main] ✅ 校准检查完成")
+    except Exception as e:
+        logger.warning(f"[Main] 校准检查跳过: {e}")
+    
     # 启动子进程
     logger.info("[Main] 启动进程...")
     ctrl_proc = Process(target=controller_worker, args=(cmd_queue,), name="Controller")
@@ -421,11 +431,17 @@ def main():
                         "y.vel": data.get("y.vel", 0.0),
                         "theta.vel": data.get("theta.vel", 0.0)
                     }
+                    logger.info(f"[Main] 📥 收到ACT命令: pan={act_cmd['arm_shoulder_pan.pos']:.1f}, "
+                              f"lift={act_cmd['arm_shoulder_lift.pos']:.1f}, "
+                              f"elbow={act_cmd['arm_elbow_flex.pos']:.1f}, "
+                              f"wrist_flex={act_cmd['arm_wrist_flex.pos']:.1f}, "
+                              f"wrist_roll={act_cmd['arm_wrist_roll.pos']:.1f}, "
+                              f"gripper={act_cmd['arm_gripper.pos']:.1f}")
                     try:
                         cmd_queue.put_nowait(act_cmd)
-                        logger.debug(f"[Main] 执行ACT动作: gripper={act_cmd['arm_gripper.pos']:.1f}")
-                    except:
-                        pass
+                        logger.info(f"[Main] ✅ ACT命令已发送到controller队列")
+                    except Exception as e:
+                        logger.error(f"[Main] ❌ ACT命令发送失败: {e}")
                 elif not auto_mode:
                     cmd = {
                         "x.vel": data.get("x.vel", 0.0),
@@ -466,15 +482,16 @@ def main():
                 request_act = nav.get("request_act", False)
                 grasp_progress = nav.get("grasp_progress", 0.0)
                 
-                # 发送底盘命令
-                try:
-                    cmd_queue.put_nowait({
-                        "x.vel": nav["x"], 
-                        "y.vel": nav["y"], 
-                        "theta.vel": nav["theta"]
-                    })
-                except:
-                    pass
+                # 发送底盘命令（仅在非grasping状态，避免覆盖ACT动作）
+                if nav["state"] != "grasping":
+                    try:
+                        cmd_queue.put_nowait({
+                            "x.vel": nav["x"], 
+                            "y.vel": nav["y"], 
+                            "theta.vel": nav["theta"]
+                        })
+                    except:
+                        pass
             
             # 5. 读取图像
             front_b64 = None

@@ -90,7 +90,7 @@ class ACTInference:
         self._load_model()
     
     def _load_model(self):
-        """加载训练好的ACT模型"""
+        """加载训练好的ACT模型（推理时不需要完整数据集）"""
         try:
             logger.info(f"[ACT] 加载模型: {self.model_path}")
             
@@ -106,41 +106,18 @@ class ACTInference:
                 logger.error(f"[ACT] 模型权重不存在: {model_path}")
                 return False
             
-            # 从训练配置加载数据集元信息
+            # 从训练配置获取数据集路径（仅用于日志显示）
             train_config_path = self.model_path / "train_config.json"
+            dataset_root = None
             if train_config_path.exists():
                 import json
                 with open(train_config_path, 'r') as f:
                     train_config = json.load(f)
-                
-                # 获取数据集信息
-                dataset_repo_id = train_config.get('dataset', {}).get('repo_id', 'acelan')
                 dataset_root = train_config.get('dataset', {}).get('root', None)
-                
-                if dataset_root and Path(dataset_root).exists():
-                    logger.info(f"[ACT] 加载数据集: {dataset_root}")
-                    self.dataset = LeRobotDataset(repo_id=dataset_repo_id, root=dataset_root)
-                else:
-                    # 尝试使用默认路径
-                    default_data_path = Path.home() / "lerobot-workspace/lekiwi-pi/data"
-                    if default_data_path.exists():
-                        data_dirs = list(default_data_path.glob("acelan_*"))
-                        if data_dirs:
-                            dataset_root = str(data_dirs[0])
-                            logger.info(f"[ACT] 使用默认数据集: {dataset_root}")
-                            self.dataset = LeRobotDataset(repo_id=dataset_repo_id, root=dataset_root)
-                        else:
-                            logger.error("[ACT] 找不到数据集目录")
-                            return False
-                    else:
-                        logger.error("[ACT] 数据集路径不存在")
-                        return False
-            else:
-                logger.error(f"[ACT] 训练配置不存在: {train_config_path}")
-                return False
+                if dataset_root:
+                    logger.info(f"[ACT] 训练数据集: {dataset_root}")
             
             # 创建策略
-            # 使用 PreTrainedConfig.from_pretrained 加载配置
             from lerobot.configs import PreTrainedConfig
             config = PreTrainedConfig.from_pretrained(str(self.model_path))
             
@@ -148,7 +125,29 @@ class ACTInference:
             logger.info(f"[ACT] 输入特征: {list(config.input_features.keys())}")
             logger.info(f"[ACT] 输出特征: {list(config.output_features.keys())}")
             
-            self.policy = make_policy(cfg=config, ds_meta=self.dataset.meta)
+            # 从配置文件构建最小化数据集元信息（不需要加载完整数据集）
+            from lerobot.datasets.utils import DatasetMetadata, FeatureShape
+            
+            features = {}
+            for key, feat in config.input_features.items():
+                if hasattr(feat, 'shape'):
+                    features[key] = FeatureShape(shape=feat.shape)
+                else:
+                    features[key] = FeatureShape(shape=feat['shape'])
+            
+            for key, feat in config.output_features.items():
+                if hasattr(feat, 'shape'):
+                    features[key] = FeatureShape(shape=feat.shape)
+                else:
+                    features[key] = FeatureShape(shape=feat['shape'])
+            
+            ds_meta = DatasetMetadata(
+                features=features,
+                stats={},  # 推理时不需要stats，模型已包含归一化参数
+                info={"fps": 30}
+            )
+            
+            self.policy = make_policy(cfg=config, ds_meta=ds_meta)
             self.policy = self.policy.from_pretrained(str(self.model_path))
             self.policy.eval()
             self.policy.to(self.device)
@@ -610,7 +609,8 @@ def main():
                 if now - last_act_time >= act_interval:
                     last_act_time = now
                     
-                    logger.debug("🤖 运行ACT推理...")
+                    logger.info("🤖 运行ACT推理...")
+                    logger.info(f"   front_image: {current_front_image is not None}, wrist_image: {current_wrist_image is not None}")
                     act_result = act_inference.infer(
                         front_image=current_front_image,
                         wrist_image=current_wrist_image,
@@ -619,6 +619,7 @@ def main():
                     
                     if act_result is not None:
                         act_action = act_result[0] if len(act_result.shape) > 1 else act_result
+                        logger.info(f"✅ ACT推理结果: {act_action}")
                         
                         # 发送ACT动作（机械臂+静止底盘）
                         if len(act_action) >= 6:
@@ -634,7 +635,9 @@ def main():
                                 "y.vel": 0.0,
                                 "theta.vel": 0.0,
                             }
-                            logger.debug(f"📤 发送ACT动作: gripper={act_action[5]:.2f}")
+                            logger.info(f"📤 发送ACT命令: {cmd}")
+                    else:
+                        logger.warning("❌ ACT推理返回 None")
             else:
                 # === 导航/手动阶段：发送手柄命令 ===
                 if action.get("toggle_auto"):
