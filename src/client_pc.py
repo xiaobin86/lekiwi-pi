@@ -538,6 +538,7 @@ def main():
     last_act_time = 0
     act_interval = 1.0 / 30.0
     current_front_image = None
+    current_wrist_image = None
     act_action = None  # 当前ACT动作
     
     try:
@@ -579,6 +580,14 @@ def main():
                         current_front_image = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
                     except:
                         pass
+                
+                if wrist_b64:
+                    try:
+                        wrist_data = base64.b64decode(wrist_b64)
+                        wrist_arr = np.frombuffer(wrist_data, np.uint8)
+                        current_wrist_image = cv2.imdecode(wrist_arr, cv2.IMREAD_COLOR)
+                    except:
+                        pass
             
             # 3. 手柄输入（获取控制命令）
             action = gamepad.get_action()
@@ -604,6 +613,7 @@ def main():
                     logger.debug("🤖 运行ACT推理...")
                     act_result = act_inference.infer(
                         front_image=current_front_image,
+                        wrist_image=current_wrist_image,
                         arm_state=ARM_DEFAULTS
                     )
                     
