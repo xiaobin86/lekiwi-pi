@@ -593,6 +593,10 @@ def main():
                 request_act = obs_data.get("request_act", False)
                 grasp_progress = obs_data.get("grasp_progress", 0.0)
                 
+                # 如果进入grasping状态，记住这个状态直到完成
+                if nav_state == "grasping":
+                    request_act = True
+                
                 # 解码图像用于ACT推理
                 if front_b64:
                     try:
@@ -624,6 +628,9 @@ def main():
             
             # 4. 发送命令（根据状态决定发送什么）
             cmd = {}
+            
+            if request_act:
+                logger.info(f"🤖 request_act=True, front_image={current_front_image is not None}, interval={time.time() - last_act_time:.3f}s")
             
             if request_act and current_front_image is not None:
                 # === ACT抓取阶段：运行推理并发送机械臂动作 ===
